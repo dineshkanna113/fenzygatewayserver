@@ -1,6 +1,6 @@
 import { startRetention } from './admin/api.js';
 import { createApp } from './app.js';
-import { assertProductionReady, config } from './config.js';
+import { assertProductionReady, config, productionWarnings } from './config.js';
 import { db } from './db.js';
 import { startSmtp } from './email/smtp.js';
 import { log } from './util.js';
@@ -11,6 +11,7 @@ if (problems.length) {
   for (const p of problems) log.error('configuration error', { problem: p });
   process.exit(1);
 }
+for (const w of productionWarnings()) log.warn('configuration warning', { problem: w });
 
 const app = createApp();
 const server = app.listen(config.port, config.host, () => {

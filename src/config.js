@@ -28,7 +28,8 @@ export const config = {
   env: str(env.NODE_ENV, 'development'),
   host: str(env.HOST, '0.0.0.0'),
   port,
-  publicUrl: str(env.PUBLIC_URL, `http://localhost:${port}`).replace(/\/+$/, ''),
+  // RENDER_EXTERNAL_URL is injected by Render for web services, so PUBLIC_URL can be left unset there.
+  publicUrl: str(env.PUBLIC_URL, str(env.RENDER_EXTERNAL_URL, `http://localhost:${port}`)).replace(/\/+$/, ''),
   dataDir: str(env.DATA_DIR, './data'),
   trustProxy: trustProxy(env.TRUST_PROXY),
   merchantName: str(env.MERCHANT_NAME, 'Fenzy'),
@@ -139,8 +140,20 @@ export const config = {
 export function assertProductionReady() {
   if (config.env !== 'production') return [];
   const problems = [];
-  if (config.admin.generatedPassword) problems.push('ADMIN_PASSWORD must be set in production');
-  else if (/^change-me/i.test(config.admin.password) || config.admin.password.length < 12) problems.push('ADMIN_PASSWORD must be at least 12 characters and not the example value');
+  const where = 'Set it in your host\'s environment variables (Render: service > Environment) and redeploy.';
+  if (config.admin.generatedPassword) problems.push(`ADMIN_PASSWORD is not set. ${where}`);
+  else if (/^change-me/i.test(config.admin.password)) problems.push(`ADMIN_PASSWORD is still the example value from .env.example. ${where}`);
+  else if (config.admin.password.length < 12) problems.push(`ADMIN_PASSWORD is ${config.admin.password.length} characters; it must be at least 12. ${where}`);
   if (!/^https?:\/\//.test(config.publicUrl)) problems.push('PUBLIC_URL must be an absolute http(s) URL');
   return problems;
+}
+
+/** Non-fatal production warnings. */
+export function productionWarnings() {
+  if (config.env !== 'production') return [];
+  const warnings = [];
+  if (/\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(config.publicUrl)) {
+    warnings.push(`PUBLIC_URL is ${config.publicUrl}; checkout links and SDK scripts will point at localhost. Set it to this server's public https URL.`);
+  }
+  return warnings;
 }
