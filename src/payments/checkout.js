@@ -12,7 +12,7 @@ const PUBLIC = path.resolve(import.meta.dirname, '../../public');
 const template = fs.readFileSync(path.join(PUBLIC, 'checkout.html'), 'utf8');
 
 const PROVIDER_THEME = {
-  razorpay: '#2f6bff',
+  razorpay: '#2457e6',
   stripe: '#635bff',
   cashfree: '#6c3ce0',
   phonepe: '#5f259f',
@@ -40,7 +40,7 @@ function renderError(res, status, title, message) {
   res.status(status).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><link rel="stylesheet" href="/assets/checkout.css"></head>
 <body><div class="app"><div class="sheet"><div class="state-screen"><div class="state-icon fail">!</div><h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(message)}</p></div>
-<div class="sheet-foot"><span class="test-pill">TEST MODE</span> Mock gateway &middot; no real money moves</div></div></div></body></html>`);
+<div class="sheet-foot"><span class="test-pill">Test mode</span> Mock gateway. No real money moves.</div></div></div></body></html>`);
 }
 
 /* ----------------------------- SDK scripts ----------------------------- */

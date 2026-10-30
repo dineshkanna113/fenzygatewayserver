@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### UI polish (Hallmark audit)
+- Login, dashboard and checkout now pass a Hallmark audit (`--scope app`) with 0 Floor failures: visible keyboard focus rings, 4.5:1 text contrast, 3:1 field borders, reduced-motion fallbacks, and every colour as a token.
+- Removed the purple-to-blue gradient from the login page, the emoji icons (replaced with SVG), uppercase letter-spaced labels and "A · B · C" strings.
+- Dashboard: credential URLs no longer break mid-word, and Sign out is now reachable on phones.
+- Checkout: the default Razorpay header colour is slightly darker for readable white text, and the UPI progress bar animates with `transform`.
+- README: screenshots of the dashboard, SMS inbox, sign-in and the four-step checkout.
+
 ### Changed
 - Startup configuration errors now say exactly what is wrong with `ADMIN_PASSWORD` (unset, the example value, or too short) and where to fix it.
 - A warning is logged when `PUBLIC_URL` still points at localhost in production.

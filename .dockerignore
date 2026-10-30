@@ -10,3 +10,4 @@ deploy
 eslint.config.js
 render.yaml
 docker-compose*.yml
+docs

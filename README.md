@@ -20,6 +20,37 @@ It also includes:
 
 ---
 
+## Screenshots
+
+**Dashboard**: integration endpoints and test credentials, live SMS and email inboxes with the OTP pulled out, payments and webhooks.
+
+![Dashboard overview showing message counts and the base URL and test keys for each payment provider](docs/screenshots/dashboard.png)
+
+![SMS inbox listing captured messages with the detected OTP highlighted for each one](docs/screenshots/dashboard-sms.png)
+
+**Hosted checkout**: what Fenzy's users see when they pay. It opens from the mock `checkout.js` / `cashfree.js` / `PhonePeCheckout` SDKs, or as a redirect.
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/screenshots/checkout-methods.png" alt="Checkout listing card, UPI, netbanking and wallet payment options for ₹1,299.00" /></td>
+    <td width="25%"><img src="docs/screenshots/checkout-card.png" alt="Card form with a 3-D Secure test card number filled in" /></td>
+    <td width="25%"><img src="docs/screenshots/checkout-otp.png" alt="Simulated bank page asking for a 6-digit OTP, with merchant, amount, card and date" /></td>
+    <td width="25%"><img src="docs/screenshots/checkout-success.png" alt="Payment successful screen with the payment ID" /></td>
+  </tr>
+  <tr>
+    <td><sub>1. Choose a method</sub></td>
+    <td><sub>2. Card details (test cards one tap away)</sub></td>
+    <td><sub>3. Bank OTP: <code>123456</code> succeeds, 3 attempts</sub></td>
+    <td><sub>4. Paid; Fenzy gets the callback and a signed webhook</sub></td>
+  </tr>
+</table>
+
+**Sign in**: the dashboard and admin API sit behind a login page with a session cookie and lockout.
+
+![Dashboard sign-in page](docs/screenshots/login.png)
+
+---
+
 ## Quick start (Docker)
 
 ```bash

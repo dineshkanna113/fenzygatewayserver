@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Sign in to the Fenzy mock gateway dashboard.">
   <title>Sign in · Mock Gateway</title>
   <link rel="stylesheet" href="/assets/login.css">
 </head>
@@ -14,11 +15,11 @@
         <div class="brand"><span class="mark">MG</span> Mock Gateway</div>
         <h1>Test payments, SMS and email without touching production rails.</h1>
         <ul class="feats">
-          <li><span>₹</span>Razorpay · Stripe · Cashfree · PhonePe</li>
-          <li><span>✉</span>SMTP · SendGrid · Resend · SES inbox</li>
-          <li><span>#</span>Twilio · MSG91 OTP capture</li>
+          <li><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20M6 15h4"/></svg></span>Razorpay, Stripe, Cashfree and PhonePe</li>
+          <li><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></span>SMTP, SendGrid, Resend and SES inbox</li>
+          <li><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>Twilio and MSG91 OTP capture</li>
         </ul>
-        <div class="chips"><span class="chip">TEST MODE</span><span class="chip ghost">No real money moves</span></div>
+        <div class="chips"><span class="chip">Test mode</span><span class="chip ghost">No real money moves</span></div>
       </div>
     </section>
 
@@ -43,7 +44,7 @@
         <input type="hidden" name="next" id="next" value="/dashboard">
         <button class="submit" type="submit" id="submit"><span>Sign in</span></button>
 
-        <p class="foot">Session lasts 12 hours · Locked for 15 minutes after 5 failed attempts</p>
+        <p class="foot">Sessions last 12 hours.<br>Five failed attempts lock sign-in for 15 minutes.</p>
       </form>
     </section>
   </main>

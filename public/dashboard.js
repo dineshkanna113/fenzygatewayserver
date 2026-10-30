@@ -126,7 +126,7 @@
           var input = s.type === 'enum'
             ? '<select class="input" name="' + s.key + '">' + s.values.map(function (v) { return '<option' + (v === s.value ? ' selected' : '') + '>' + v + '</option>'; }).join('') + '</select>'
             : '<input class="input" name="' + s.key + '" value="' + esc(s.value) + '" placeholder="' + esc(s.type === 'url' ? 'https://your-app/webhooks/...' : '') + '">';
-          return '<div class="field"><div>' + esc(s.label) + '<small>' + esc(s.key) + (s.overridden ? ' · overridden (env: ' + esc(s.default || '—') + ')' : '') + '</small></div>' + input +
+          return '<div class="field"><div>' + esc(s.label) + '<small><code>' + esc(s.key) + '</code>' + (s.overridden ? ', overridden (env default: ' + esc(s.default || '—') + ')' : '') + '</small></div>' + input +
             (s.overridden ? '<button type="button" class="btn ghost sm" data-reset="' + s.key + '">Reset</button>' : '<span></span>') + '</div>';
         }).join('') + '<div style="margin-top:14px"><button class="btn" type="submit">Save settings</button></div></form></div></div>' +
           '<div class="panel"><h3>Danger zone</h3><div class="panel-body actions"><button class="btn ghost danger" data-reset-all="all">Delete ALL data</button><button class="btn ghost danger" data-reset-all="otps">Delete OTPs</button></div></div>';
@@ -140,7 +140,7 @@
     sms: function (id) {
       return api('/sms/' + id).then(function (m) {
         drawerTitle.textContent = 'SMS to ' + m.to_addr;
-        return '<dl class="kv"><dt>To</dt><dd class="mono">' + esc(m.to_addr) + '</dd><dt>From</dt><dd class="mono">' + esc(m.from_addr) + '</dd><dt>Provider</dt><dd>' + esc(m.provider) + ' · ' + esc(m.channel) + '</dd><dt>Status</dt><dd>' + pill(m.status) + '</dd><dt>Received</dt><dd>' + new Date(m.created_at).toLocaleString() + '</dd>' +
+        return '<dl class="kv"><dt>To</dt><dd class="mono">' + esc(m.to_addr) + '</dd><dt>From</dt><dd class="mono">' + esc(m.from_addr) + '</dd><dt>Provider</dt><dd>' + esc(m.provider) + '</dd><dt>Channel</dt><dd>' + esc(m.channel) + '</dd><dt>Status</dt><dd>' + pill(m.status) + '</dd><dt>Received</dt><dd>' + new Date(m.created_at).toLocaleString() + '</dd>' +
           (m.otp ? '<dt>OTP</dt><dd><span class="otp" data-copy="' + esc(m.otp) + '">' + esc(m.otp) + '</span></dd>' : '') + '</dl><h4>Body</h4><pre>' + esc(m.body) + '</pre><h4>Metadata</h4>' + json(m.meta);
       });
     },
@@ -155,13 +155,13 @@
           '<div data-epane="html">' + (e.has_html ? '<iframe class="email-frame" sandbox src="/api/emails/' + e.id + '/html"></iframe>' : '<p class="muted">No HTML part.</p>') + '</div>' +
           '<div data-epane="text" hidden><pre>' + esc(e.text) + '</pre></div><div data-epane="headers" hidden>' + json(e.headers) + json(e.meta) + '</div>' +
           (e.links.length ? '<h4>Links</h4><div class="links">' + e.links.map(function (l) { return '<a href="' + esc(l) + '" target="_blank" rel="noopener noreferrer">' + esc(l) + '</a>'; }).join('') + '</div>' : '') +
-          (e.attachments.length ? '<h4>Attachments</h4>' + e.attachments.map(function (a) { return '<div><a href="/api/emails/' + e.id + '/attachments/' + a.id + '">' + esc(a.filename) + '</a> <span class="muted">' + esc(a.content_type) + ' · ' + Math.ceil(a.size / 1024) + ' KB</span></div>'; }).join('') : '');
+          (e.attachments.length ? '<h4>Attachments</h4>' + e.attachments.map(function (a) { return '<div><a href="/api/emails/' + e.id + '/attachments/' + a.id + '">' + esc(a.filename) + '</a> <span class="muted">' + esc(a.content_type) + ', ' + Math.ceil(a.size / 1024) + ' KB</span></div>'; }).join('') : '');
       });
     },
 
     payment: function (id) {
       return api('/payments/' + encodeURIComponent(id)).then(function (p) {
-        drawerTitle.textContent = p.provider + ' · ' + p.checkout_id;
+        drawerTitle.textContent = p.provider + ': ' + p.checkout_id;
         var open = ['created', 'attempted'].indexOf(p.status) >= 0;
         var refundable = ['paid', 'partially_refunded'].indexOf(p.status) >= 0;
         return '<dl class="kv"><dt>Amount</dt><dd><b>' + money(p.amount, p.currency) + '</b></dd><dt>Status</dt><dd>' + pill(p.status) + '</dd><dt>Method</dt><dd>' + esc(p.method || '—') + '</dd><dt>Reference</dt><dd class="mono">' + esc(p.reference || '—') + '</dd>' +
@@ -169,14 +169,14 @@
           '<div class="actions">' + (open ? '<button class="btn ok sm" data-sim="success">Simulate success</button><button class="btn bad sm" data-sim="failed">Simulate failure</button>' : '') +
           (refundable ? '<input class="input" style="width:140px;height:28px" id="refund-amt" placeholder="amount (minor)"><button class="btn ghost sm" data-refund>Refund</button>' : '') + '</div>' +
           '<h4>Provider object</h4>' + json(p.object) +
-          (p.related.length ? '<h4>Related objects</h4>' + p.related.map(function (o) { return '<details><summary class="mono">' + esc(o.type) + ' · ' + esc(o.id) + '</summary>' + json(o.data) + '</details>'; }).join('') : '') +
+          (p.related.length ? '<h4>Related objects</h4>' + p.related.map(function (o) { return '<details><summary class="mono">' + esc(o.type) + ': ' + esc(o.id) + '</summary>' + json(o.data) + '</details>'; }).join('') : '') +
           '<h4>Webhooks</h4>' + (p.webhooks.length ? p.webhooks.map(function (w) { return '<div style="margin-bottom:6px">' + pill(w.status) + ' <span class="mono">' + esc(w.event) + '</span> <a href="#" data-open="webhook" data-id="' + w.id + '">details</a></div>'; }).join('') : '<p class="muted">None</p>');
       });
     },
 
     webhook: function (id) {
       return api('/webhooks/' + id).then(function (w) {
-        drawerTitle.textContent = w.provider + ' · ' + w.event;
+        drawerTitle.textContent = w.provider + ': ' + w.event;
         return '<dl class="kv"><dt>URL</dt><dd class="mono">' + esc(w.url || '— not configured —') + '</dd><dt>Status</dt><dd>' + pill(w.status) + '</dd><dt>Attempts</dt><dd>' + w.attempts + '</dd>' +
           '<dt>Last HTTP</dt><dd>' + esc(w.last_status || '—') + '</dd><dt>Last error</dt><dd>' + esc(w.last_error || '—') + '</dd>' + (w.next_attempt_at ? '<dt>Next attempt</dt><dd>' + new Date(w.next_attempt_at).toLocaleString() + '</dd>' : '') + '</dl>' +
           '<div class="actions"><button class="btn sm" data-retry="' + w.id + '">Redeliver now</button></div>' +

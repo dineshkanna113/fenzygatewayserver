@@ -137,7 +137,7 @@
     var payer = [C.prefill.contact, C.prefill.email].filter(Boolean).map(esc).join('<br>');
     var closable = C.embedded || C.cancelable;
     var lockScreens = ['processing', 'success'];
-    return '<div class="sheet-head"><div class="test-banner">TEST MODE</div>' +
+    return '<div class="sheet-head"><div class="test-banner">Test mode</div>' +
       '<div class="head-row"><div class="logo">' + logo + '</div>' +
       '<div class="merchant"><div class="merchant-name">' + esc(C.merchant) + '</div>' +
       '<div class="merchant-desc">' + esc(C.description || C.label + ' secure checkout') + '</div></div>' +
@@ -147,7 +147,7 @@
   }
 
   function foot() {
-    return '<div class="sheet-foot"><span class="test-pill">TEST MODE</span><span class="lock">' + I.lock + ' Secured by ' + esc(C.label) + ' &middot; mock, no real money</span></div>';
+    return '<div class="sheet-foot"><span class="test-pill">Test mode</span><span class="lock">' + I.lock + ' Secured by ' + esc(C.label) + ' (mock). No real money moves.</span></div>';
   }
 
   function backLink() {
@@ -213,7 +213,7 @@
       return '<div class="state-screen"><div class="state-icon wait">' + I.clock + '</div>' +
         '<h2>Approve payment</h2><p class="muted">' + (S.upi.flow === 'intent' ? 'Complete the payment in ' + esc(S.upi.app) : 'A collect request was sent to <strong>' + esc(S.upi.vpa) + '</strong>') + '</p>' +
         '<p class="muted small">Open your UPI app and approve the request from ' + esc(C.merchant) + '.</p>' +
-        '<div class="progress"><div id="upi-bar" style="width:100%"></div></div><p class="muted small">Expires in <span id="upi-left">5:00</span>' + (auto ? ' &middot; auto-approves in <span id="upi-auto">' + C.upiAutoApproveSeconds + '</span>s' : '') + '</p></div>' +
+        '<div class="progress"><div id="upi-bar"></div></div><p class="muted small">Expires in <span id="upi-left">5:00</span>.' + (auto ? ' Auto-approves in <span id="upi-auto">' + C.upiAutoApproveSeconds + '</span>s' : '') + '</p></div>' +
         '<div class="btn-row"><button class="btn ok" data-action="upi-approve">Simulate approve</button><button class="btn danger" data-action="upi-decline">Simulate decline</button></div>';
     },
 
@@ -234,8 +234,8 @@
 
     bank: function () {
       var color = BANK_COLORS[S.bank.code] || '#334155';
-      return '<div class="bank-page"><div class="bank-bar" style="background:' + color + '"><span class="mono" style="width:30px;height:30px;border-radius:6px;background:rgba(255,255,255,.2);display:grid;place-items:center">' + esc(S.bank.name.charAt(0)) + '</span><div>' + esc(S.bank.name) + '<small>NetBanking &middot; simulated</small></div></div>' +
-        '<div class="bank-content"><div class="sim-note">Simulated bank page &middot; choose the outcome</div>' +
+      return '<div class="bank-page"><div class="bank-bar" style="background:' + color + '"><span class="mono" style="width:30px;height:30px;border-radius:6px;background:var(--acs-badge);display:grid;place-items:center">' + esc(S.bank.name.charAt(0)) + '</span><div>' + esc(S.bank.name) + '<small>NetBanking (simulated)</small></div></div>' +
+        '<div class="bank-content"><div class="sim-note">Simulated bank page. Choose the outcome.</div>' +
         '<div class="bank-amount"><span>Pay to ' + esc(C.merchant) + '</span><strong>' + AMOUNT + '</strong></div>' +
         field('nb-user', 'Customer ID', '<input class="input" id="nb-user" value="TESTUSER01">') +
         field('nb-pass', 'Password', '<input class="input" id="nb-pass" type="password" value="password">') +
@@ -253,7 +253,7 @@
     wallet_page: function () {
       var color = WALLET_COLORS[S.wallet.code] || '#334155';
       return '<div class="bank-page"><div class="bank-bar" style="background:' + color + '">' + esc(S.wallet.name) + '<small style="margin-left:auto">simulated wallet</small></div>' +
-        '<div class="bank-content"><div class="sim-note">Simulated wallet page &middot; choose the outcome</div>' +
+        '<div class="bank-content"><div class="sim-note">Simulated wallet page. Choose the outcome.</div>' +
         '<div class="bank-amount"><span>Wallet balance</span><strong>' + money(Math.max(C.amount * 3, 500000), C.currency) + '</strong></div>' +
         '<div class="bank-amount"><span>Pay to ' + esc(C.merchant) + '</span><strong>' + AMOUNT + '</strong></div>' +
         '<div class="btn-row"><button class="btn ok" data-action="wallet-success">Success</button><button class="btn danger" data-action="wallet-fail">Failure</button></div></div></div>' +
@@ -337,7 +337,7 @@
     return '<div class="acs">' +
       '<div class="acs-head">' +
         '<div class="acs-issuer"><span class="acs-logo">' + esc(issuer.charAt(0)) + '</span><div><b>' + esc(issuer) + '</b><small>Secure payment authentication</small></div></div>' +
-        '<span class="acs-net">' + I.lock + ' ' + esc(network) + ' &middot; 3-D Secure</span>' +
+        '<span class="acs-net">' + I.lock + ' ' + esc(network) + ' 3-D Secure</span>' +
       '</div>' +
       '<div class="acs-body">' +
         '<h3>Enter OTP to authorise this payment</h3>' +
@@ -355,9 +355,9 @@
           '<button class="btn" type="submit" id="otp-submit" disabled>Verify &amp; pay ' + AMOUNT + '</button>' +
         '</form>' +
         '<p class="acs-cancel"><button class="link-btn danger-link" data-action="' + (mode === 'authenticate' ? 'auth-fail' : 'otp-cancel') + '">Cancel payment</button></p>' +
-        '<div class="sim-note">Simulated issuer &middot; OTP <code>' + esc(C.successOtp) + '</code> succeeds &middot; ' + (C.otpMaxAttempts || 3) + ' attempts</div>' +
+        '<div class="sim-note">Simulator: OTP <code>' + esc(C.successOtp) + '</code> succeeds, ' + (C.otpMaxAttempts || 3) + ' tries.</div>' +
       '</div>' +
-      '<div class="acs-foot">' + I.lock + ' Your OTP is never shared with ' + esc(C.merchant) + '. Do not share it with anyone.</div>' +
+      '<div class="acs-foot">' + I.lock + ' Never share this OTP, not even with ' + esc(C.merchant) + '.</div>' +
     '</div>';
   }
 
@@ -508,7 +508,7 @@
     S.timers.push(setInterval(function () {
       left -= 1;
       var bar = document.getElementById('upi-bar'), lbl = document.getElementById('upi-left');
-      if (bar) bar.style.width = (left / total) * 100 + '%';
+      if (bar) bar.style.transform = 'scaleX(' + left / total + ')';
       if (lbl) lbl.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
       if (auto) {
         autoLeft -= 1;
