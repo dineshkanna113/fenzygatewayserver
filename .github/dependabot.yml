@@ -16,3 +16,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Stay on the Node LTS line (24); move to the next LTS deliberately, not via odd-numbered releases.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
