@@ -1,6 +1,6 @@
 {
   "name": "fenzy-mock-gateway",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Mock SMS, Email and Payment gateway server (Razorpay, Stripe, Cashfree, PhonePe, Twilio, MSG91, SendGrid, Resend, SES, SMTP) for testing Fenzy",
   "type": "module",
