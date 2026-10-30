@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `PUBLIC_URL` falls back to Render's `RENDER_EXTERNAL_URL`, so the Render Blueprint needs no manual values.
 - `render.yaml` uses `autoDeployTrigger` (Render deprecated `autoDeploy`).
 
+### Fixed
+- CI: pin `aquasecurity/trivy-action` to the v0.36.0 commit (the old `0.28.0` tag no longer exists).
+- Docker image no longer ships npm/yarn/corepack, which removes 6 HIGH CVEs found in npm's bundled dependencies.
+
 ## [1.0.0] - 2026-10-31
 
 First release.

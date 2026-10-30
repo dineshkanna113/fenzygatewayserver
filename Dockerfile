@@ -14,7 +14,11 @@ ENV NODE_ENV=production \
     SMTP_PORT=2525 \
     DATA_DIR=/data
 WORKDIR /app
-RUN apk add --no-cache tini && mkdir -p /data && chown node:node /data
+# The app never runs npm/yarn at runtime; removing them drops their bundled dependencies (and CVEs) from the image.
+RUN apk add --no-cache tini \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+ && mkdir -p /data && chown node:node /data
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
