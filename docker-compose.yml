@@ -1,0 +1,18 @@
+services:
+  mock-gateway:
+    build: .
+    image: fenzy-mock-gateway:latest
+    container_name: fenzy-mock-gateway
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${HTTP_PORT:-4000}:4000"   # HTTP: APIs, checkout pages, dashboard
+      - "${SMTP_PUBLIC_PORT:-2525}:2525"   # SMTP capture
+    volumes:
+      - mock-gateway-data:/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  mock-gateway-data:

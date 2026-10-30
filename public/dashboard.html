@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Mock Gateway</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="side">
+      <div class="brand"><span class="brand-mark">MG</span><div><b>Mock Gateway</b><small>SMS · Email · Payments</small></div></div>
+      <nav id="nav">
+        <a data-tab="overview" href="#overview">Overview</a>
+        <a data-tab="sms" href="#sms">SMS <span class="count" id="c-sms"></span></a>
+        <a data-tab="emails" href="#emails">Email <span class="count" id="c-emails"></span></a>
+        <a data-tab="payments" href="#payments">Payments <span class="count" id="c-payments"></span></a>
+        <a data-tab="webhooks" href="#webhooks">Webhooks <span class="count warn" id="c-webhooks"></span></a>
+        <a data-tab="settings" href="#settings">Settings</a>
+      </nav>
+      <div class="side-foot">
+        <div class="live"><span class="dot" id="live-dot"></span><span id="live-text">connecting…</span></div>
+        <div class="user"><span class="avatar" aria-hidden="true">A</span><span id="who">admin</span><button class="btn ghost sm" id="logout">Sign out</button></div>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="top">
+        <h1 id="title">Overview</h1>
+        <div class="top-actions">
+          <input id="search" class="input" type="search" placeholder="Search…" autocomplete="off">
+          <button class="btn ghost" id="refresh" title="Refresh">Refresh</button>
+          <button class="btn ghost danger" id="clear" title="Delete all records in this tab">Clear</button>
+        </div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-panel">
+      <div class="drawer-head"><h2 id="drawer-title"></h2><button class="btn ghost" id="drawer-close">Close</button></div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </div>
+  </div>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

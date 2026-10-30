@@ -1,0 +1,11 @@
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy mock-gateway:4000 {
+		# keep live dashboard updates (server-sent events) streaming
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}

@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)deploy, e.g. v1.0.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    name: Validate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      image: ${{ steps.v.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - id: v
+        name: Tag must match package.json version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG. Bump package.json first."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Build & push image
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ needs.prepare.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Fenzy Mock Gateway
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  github-release:
+    name: GitHub release
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+        run: node scripts/release-notes.mjs "$VERSION" "$IMAGE" > release-notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          body_path: release-notes.md
+
+  deploy:
+    name: Deploy to test-prod
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    environment:
+      name: test-prod
+      url: ${{ vars.PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Decide deploy target
+        id: target
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -n "$DEPLOY_HOST" ]; then
+            echo "kind=ssh" >> "$GITHUB_OUTPUT"
+          elif [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "kind=render" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+            echo "::warning::No deploy target configured. Set DEPLOY_HOST (+ DEPLOY_USER, DEPLOY_SSH_KEY) or RENDER_DEPLOY_HOOK_URL in the test-prod environment. The image was published only."
+          fi
+
+      - name: Upload compose files (VM)
+        if: steps.target.outputs.kind == 'ssh'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          source: docker-compose.prod.yml,deploy/Caddyfile
+          target: ${{ vars.DEPLOY_PATH || '/opt/fenzy-mock-gateway' }}
+
+      - name: Roll out on VM
+        if: steps.target.outputs.kind == 'ssh'
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/fenzy-mock-gateway' }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          envs: IMAGE,TAG,GHCR_USER,GHCR_TOKEN,DEPLOY_PATH
+          script_stop: true
+          script: |
+            cd "$DEPLOY_PATH"
+            test -f .env || { echo ".env missing in $DEPLOY_PATH - copy .env.example there and fill it in"; exit 1; }
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export IMAGE TAG
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f >/dev/null
+            docker logout ghcr.io
+
+      - name: Trigger Render deploy
+        if: steps.target.outputs.kind == 'render'
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl -fsS -X POST "$HOOK"
+
+      - name: Verify deployed version
+        if: steps.target.outputs.kind != 'none' && vars.PUBLIC_URL != ''
+        env:
+          URL: ${{ vars.PUBLIC_URL }}
+          WANT: ${{ needs.prepare.outputs.version }}
+        run: |
+          for i in $(seq 1 40); do
+            GOT=$(curl -fsS "$URL/health" 2>/dev/null | jq -r .version || true)
+            if [ "$GOT" = "$WANT" ]; then echo "Live: $URL is running v$GOT"; exit 0; fi
+            echo "waiting for v$WANT (currently: ${GOT:-unreachable})"
+            sleep 15
+          done
+          echo "::error::$URL did not report v$WANT within 10 minutes"
+          exit 1

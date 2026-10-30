@@ -1,0 +1,26 @@
+# Render Blueprint (https://render.com/docs/blueprint-spec).
+# Free plan notes: the instance sleeps when idle and its disk is wiped on every deploy/restart,
+# so captured SMS/email/payments are temporary. The SMTP port is not reachable on Render;
+# use the SendGrid/Resend/SES/generic email APIs there instead.
+services:
+  - type: web
+    name: fenzy-mock-gateway
+    runtime: docker
+    plan: free
+    autoDeploy: false          # deploys come from the Release workflow's deploy hook
+    healthCheckPath: /health
+    envVars:
+      - key: PUBLIC_URL
+        sync: false            # e.g. https://fenzy-mock-gateway.onrender.com
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SMTP_ENABLED
+        value: "false"
+      - key: RETENTION_DAYS
+        value: "3"

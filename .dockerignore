@@ -1,0 +1,12 @@
+node_modules
+data
+.env
+.git
+.github
+test
+scripts
+deploy
+*.md
+eslint.config.js
+render.yaml
+docker-compose*.yml

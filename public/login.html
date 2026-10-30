@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Sign in · Mock Gateway</title>
+  <link rel="stylesheet" href="/assets/login.css">
+</head>
+<body>
+  <main class="wrap">
+    <section class="art" aria-hidden="true">
+      <div class="art-inner">
+        <div class="brand"><span class="mark">MG</span> Mock Gateway</div>
+        <h1>Test payments, SMS and email without touching production rails.</h1>
+        <ul class="feats">
+          <li><span>₹</span>Razorpay · Stripe · Cashfree · PhonePe</li>
+          <li><span>✉</span>SMTP · SendGrid · Resend · SES inbox</li>
+          <li><span>#</span>Twilio · MSG91 OTP capture</li>
+        </ul>
+        <div class="chips"><span class="chip">TEST MODE</span><span class="chip ghost">No real money moves</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <form class="card" method="post" action="/login" id="login" novalidate>
+        <div class="brand small"><span class="mark">MG</span> Mock Gateway</div>
+        <h2>Sign in to the dashboard</h2>
+        <p class="sub">Use the admin credentials from your <code>.env</code> file.</p>
+
+        <div class="alert" id="alert" role="alert" hidden></div>
+
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+
+        <label for="password">Password</label>
+        <div class="pw">
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button type="button" class="reveal" id="reveal" aria-label="Show password">Show</button>
+        </div>
+        <p class="caps" id="caps" hidden>Caps Lock is on</p>
+
+        <input type="hidden" name="next" id="next" value="/dashboard">
+        <button class="submit" type="submit" id="submit"><span>Sign in</span></button>
+
+        <p class="foot">Session lasts 12 hours · Locked for 15 minutes after 5 failed attempts</p>
+      </form>
+    </section>
+  </main>
+  <script src="/assets/login.js"></script>
+</body>
+</html>

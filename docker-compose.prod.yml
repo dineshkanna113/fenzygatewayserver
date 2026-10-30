@@ -1,0 +1,41 @@
+# Production-style deployment on a VM: the published image behind Caddy (automatic HTTPS).
+# Used by the Release workflow; can also be run by hand:
+#   IMAGE=ghcr.io/<owner>/<repo> TAG=1.0.0 docker compose -f docker-compose.prod.yml up -d
+services:
+  mock-gateway:
+    image: ${IMAGE:?set IMAGE, e.g. ghcr.io/owner/fenzy-mock-gateway}:${TAG:-latest}
+    container_name: fenzy-mock-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"
+    expose:
+      - "4000"
+    ports:
+      - "${SMTP_PUBLIC_PORT:-2525}:2525"   # SMTP capture (restrict with your firewall)
+    volumes:
+      - mock-gateway-data:/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: fenzy-mock-gateway-caddy
+    restart: unless-stopped
+    depends_on:
+      - mock-gateway
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env, e.g. mock-gateway.example.com}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  mock-gateway-data:
+  caddy-data:
+  caddy-config:
