@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-FROM node:24-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-FROM node:24-alpine
+FROM node:25-alpine
 ARG APP_VERSION=""
 LABEL org.opencontainers.image.title="Fenzy Mock Gateway" \
       org.opencontainers.image.description="Mock SMS, Email and Payment gateway for testing"
