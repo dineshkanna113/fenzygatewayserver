@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- Startup configuration errors now say exactly what is wrong with `ADMIN_PASSWORD` (unset, the example value, or too short) and where to fix it.
+- A warning is logged when `PUBLIC_URL` still points at localhost in production.
+- `PUBLIC_URL` falls back to Render's `RENDER_EXTERNAL_URL`, so the Render Blueprint needs no manual values.
+- `render.yaml` uses `autoDeployTrigger` (Render deprecated `autoDeploy`).
+
 ## [1.0.0] - 2026-10-31
 
 First release.
