@@ -31,6 +31,7 @@ Object.assign(process.env, {
   STRIPE_WEBHOOK_URL: `${HOOK}/stripe`,
   CASHFREE_WEBHOOK_URL: `${HOOK}/cashfree`,
   PHONEPE_WEBHOOK_URL: `${HOOK}/phonepe2`,
+  PAYTM_WEBHOOK_URL: `${HOOK}/paytm`,
   GENERIC_WEBHOOK_URL: `${HOOK}/generic`,
   RATE_LIMIT_PER_MINUTE: '0',
 });
@@ -397,6 +398,297 @@ describe('phonepe', () => {
     const w = await waitFor(() => received.find((x) => x.path === '/phonepe2'));
     assert.equal(w.headers.authorization, sha256(`${config.phonepe.webhookUsername}:${config.phonepe.webhookPassword}`));
     assert.equal(JSON.parse(w.body).event, 'checkout.order.failed');
+  });
+
+  test('v2 order status and refund follow the published response shapes', async () => {
+    const tok = await call('POST', '/phonepe/v1/oauth/token', { form: { client_id: config.phonepe.clientId, client_secret: config.phonepe.clientSecret, client_version: config.phonepe.clientVersion, grant_type: 'client_credentials' } });
+    const h = { Authorization: `O-Bearer ${tok.data.access_token}` };
+    const pay = (id, amount) => call('POST', '/phonepe/checkout/v2/pay', { headers: h, json: { merchantOrderId: id, amount, paymentFlow: { type: 'PG_CHECKOUT', merchantUrls: { redirectUrl: 'https://app.example/pp2' } } } });
+    const status = (id, q = '') => call('GET', `/phonepe/checkout/v2/order/${id}/status${q}`, { headers: h });
+
+    const missing = await status('NO-SUCH-ORDER');
+    assert.equal(missing.status, 404);
+    assert.deepEqual(missing.data, { code: 'INVALID_MERCHANT_ORDER_ID', message: 'No entry found for given merchant order id' });
+
+    await pay('MO-SHAPE', 20000);
+    const pending = (await status('MO-SHAPE')).data;
+    assert.deepEqual(pending.paymentDetails, []);
+    assert.deepEqual(Object.keys(pending.metaInfo), Array.from({ length: 15 }, (_, i) => `udf${i + 1}`));
+
+    await complete('phonepe2', 'MO-SHAPE', { method: 'upi', vpa: 'success@upi' });
+    const done = (await status('MO-SHAPE')).data;
+    assert.equal(done.state, 'COMPLETED');
+    assert.equal(done.payableAmount, 20000);
+    assert.equal(done.feeAmount, 0);
+    assert.equal(done.paymentDetails[0].payableAmount, 20000);
+
+    const refund = (id, amount) => call('POST', '/phonepe/payments/v2/refund', { headers: h, json: { merchantRefundId: id, originalMerchantOrderId: 'MO-SHAPE', amount } });
+    assert.equal((await refund('RF-LOW', 99)).status, 400, 'PhonePe documents a 100 paise minimum');
+    assert.equal((await refund('RF-HIGH', 20001)).status, 400);
+    const ok = await refund('RF-OK', 5000);
+    assert.equal(ok.data.state, 'PENDING');
+    assert.equal(ok.data.amount, 5000);
+    await new Promise((r) => setTimeout(r, 1800));
+    const rs = (await call('GET', '/phonepe/payments/v2/refund/RF-OK/status', { headers: h })).data;
+    assert.equal(rs.state, 'COMPLETED');
+    assert.equal(rs.originalMerchantOrderId, 'MO-SHAPE');
+    assert.equal(rs.splitInstruments[0].amount, 5000);
+
+    await pay('MO-FAIL', 10000);
+    await complete('phonepe2', 'MO-FAIL', { method: 'upi', vpa: 'failure@upi' });
+    const failed = (await status('MO-FAIL', '?errorContext=true')).data;
+    assert.equal(failed.state, 'FAILED');
+    assert.ok(failed.errorCode && failed.detailedErrorCode);
+    assert.deepEqual(Object.keys(failed.errorContext), ['errorCode', 'detailedErrorCode', 'source', 'stage', 'description']);
+    assert.equal((await status('MO-FAIL')).data.errorContext, undefined, 'errorContext only when asked for');
+  });
+});
+
+describe('upipay SDK (real package against the mock)', () => {
+  let uninstall;
+  let toMock;
+  let UPIPay;
+
+  before(async () => {
+    const shim = await import('../scripts/upipay-shim.mjs');
+    ({ UPIPay } = await import('upipay'));
+    toMock = shim.toMock;
+    uninstall = shim.installUpipayShim(BASE);
+  });
+  after(() => uninstall?.());
+
+  const paytmClient = () => new UPIPay({ provider: 'paytm', environment: 'sandbox', credentials: { merchantId: config.paytm.merchantId, merchantKey: config.paytm.merchantKey } });
+
+  test('paytm: create -> hosted checkout -> callback checksum -> status -> refund', async () => {
+    const client = paytmClient();
+    const pay = await client.createPayment({ amount: 12345, orderId: 'pay_paytm_1', customerPhone: '9876543210', callbackUrl: 'https://app.example/paytm-cb', redirectUrl: 'https://app.example/done' });
+    assert.equal(pay.success, true);
+
+    const page = new URL(toMock(pay.paymentUrl));
+    const hop = await call('GET', page.pathname + page.search);
+    assert.equal(hop.status, 302);
+    assert.match(hop.headers.get('location'), /\/checkout\/paytm\/pay_paytm_1$/);
+    assert.equal((await call('GET', '/checkout/paytm/pay_paytm_1')).status, 200);
+    assert.equal((await call('GET', `/paytm/theia/api/v1/showPaymentPage?mid=${config.paytm.merchantId}&orderId=pay_paytm_1&txnToken=wrong`)).status, 400);
+
+    const done = (await complete('paytm', 'pay_paytm_1', { method: 'upi', vpa: 'success@upi' })).data;
+    assert.equal(done.status, 'success');
+    assert.equal(done.next.method, 'POST');
+    assert.equal(done.next.url, 'https://app.example/paytm-cb');
+
+    // The browser callback is verified by the SDK exactly as an app would.
+    const raw = new URLSearchParams(done.next.fields).toString();
+    const event = client.verifyWebhook(raw, done.next.fields.CHECKSUMHASH, { expectedAmount: 12345 });
+    assert.equal(event.verified, true);
+    assert.equal(event.status, 'SUCCESS');
+    assert.equal(event.orderId, 'pay_paytm_1');
+    const tampered = client.verifyWebhook(raw.replace('TXNAMOUNT=123.45', 'TXNAMOUNT=1.00'), done.next.fields.CHECKSUMHASH, { expectedAmount: 12345 });
+    assert.equal(tampered.verified, false);
+
+    // Server-to-server webhook carries the same signed fields as a form post.
+    const hookCall = await waitFor(() => received.find((x) => x.path === '/paytm'));
+    const form = Object.fromEntries(new URLSearchParams(hookCall.body));
+    assert.equal(client.verifyWebhook(hookCall.body, form.CHECKSUMHASH, { expectedAmount: 12345 }).verified, true);
+
+    const status = await client.checkStatus('pay_paytm_1', { expectedAmount: 12345, maxRetries: 1 });
+    assert.equal(status.status, 'SUCCESS');
+    assert.equal(status.amount, 12345);
+
+    const refund = await client.createRefund({ originalOrderId: 'pay_paytm_1', refundId: 'refund_paytm_1', amount: 5000, providerTransactionId: status.transactionId });
+    assert.equal(refund.refundId, 'refund_paytm_1');
+    assert.ok(['PENDING', 'SUCCESS'].includes(refund.status));
+    const tooMuch = await client.createRefund({ originalOrderId: 'pay_paytm_1', refundId: 'refund_paytm_2', amount: 999999, providerTransactionId: status.transactionId });
+    assert.equal(tooMuch.status, 'FAILED');
+  });
+
+  test('paytm: failed payment and wrong merchant key', async () => {
+    const client = paytmClient();
+    await client.createPayment({ amount: 5000, orderId: 'pay_paytm_2', customerPhone: '9876543210', callbackUrl: 'https://app.example/paytm-cb', redirectUrl: 'https://app.example/done' });
+    const done = (await complete('paytm', 'pay_paytm_2', { method: 'netbanking', bank: 'SBIN', bank_outcome: 'failed' })).data;
+    assert.equal(done.status, 'failed');
+    assert.equal(done.next.fields.STATUS, 'TXN_FAILURE');
+    const status = await client.checkStatus('pay_paytm_2', { maxRetries: 1 });
+    assert.equal(status.status, 'FAILED');
+
+    const wrong = new UPIPay({ provider: 'paytm', environment: 'sandbox', credentials: { merchantId: config.paytm.merchantId, merchantKey: 'wrongwrongwrong16' } });
+    const rejected = await wrong.createPayment({ amount: 5000, orderId: 'pay_paytm_3', customerPhone: '9876543210', callbackUrl: 'https://app.example/paytm-cb', redirectUrl: 'https://app.example/done' }).catch((e) => e);
+    assert.ok(rejected instanceof Error || rejected.success === false, 'a bad checksum must not create a payment');
+    const noOrder = await call('GET', '/checkout/paytm/pay_paytm_3');
+    assert.equal(noOrder.status, 404);
+  });
+
+  test('phonepe v1: create -> checkout -> signed webhook -> status', async () => {
+    const client = new UPIPay({ provider: 'phonepe', environment: 'sandbox', credentials: { merchantId: config.phonepe.merchantId, saltKey: config.phonepe.saltKey, saltIndex: config.phonepe.saltIndex } });
+    const pay = await client.createPayment({ amount: 20000, orderId: 'pay_phonepe_1', customerPhone: '9876543210', callbackUrl: `${HOOK}/phonepe-upipay`, redirectUrl: 'https://app.example/done' });
+    assert.equal(pay.success, true);
+    assert.match(pay.paymentUrl, /\/checkout\/phonepe\/pay_phonepe_1$/);
+    await complete('phonepe', 'pay_phonepe_1', { method: 'upi', vpa: 'success@upi' });
+    const cb = await waitFor(() => received.find((x) => x.path === '/phonepe-upipay'));
+    const event = client.verifyWebhook(cb.body, cb.headers['x-verify'], { expectedAmount: 20000 });
+    assert.equal(event.verified, true);
+    assert.equal(event.status, 'SUCCESS');
+    const status = await client.checkStatus('pay_phonepe_1', { expectedAmount: 20000, maxRetries: 1 });
+    assert.equal(status.status, 'SUCCESS');
+  });
+});
+
+describe('failure injection and Paytm lifecycle', () => {
+  const setSetting = (patch) => call('PUT', '/api/settings', { headers: ADMIN, json: patch });
+  const newPaytmOrder = async (client, orderId, amount = 10000) => {
+    const pay = await client.createPayment({ amount, orderId, customerPhone: '9876543210', callbackUrl: 'https://app.example/paytm-cb', redirectUrl: 'https://app.example/done' });
+    assert.equal(pay.success, true);
+  };
+  let client;
+  let uninstall;
+  let paytm;
+
+  before(async () => {
+    const shim = await import('../scripts/upipay-shim.mjs');
+    const { UPIPay } = await import('upipay');
+    paytm = await import('../src/payments/paytm.js');
+    uninstall = shim.installUpipayShim(BASE);
+    client = new UPIPay({ provider: 'paytm', environment: 'sandbox', credentials: { merchantId: config.paytm.merchantId, merchantKey: config.paytm.merchantKey } });
+  });
+  after(() => uninstall?.());
+
+  test('nextFailure fails exactly one payment, then resets', async () => {
+    assert.equal((await setSetting({ 'checkout.nextFailure': 'insufficient_funds' })).status, 200);
+    await newPaytmOrder(client, 'inj_1');
+    await newPaytmOrder(client, 'inj_2');
+    const first = (await complete('paytm', 'inj_1', { method: 'upi', vpa: 'success@upi' })).data;
+    assert.equal(first.status, 'failed');
+    assert.equal(first.next.fields.RESPCODE, '227', 'a declined UPI payment uses the bank-decline code');
+    const second = (await complete('paytm', 'inj_2', { method: 'upi', vpa: 'success@upi' })).data;
+    assert.equal(second.status, 'success');
+    const rows = (await call('GET', '/api/settings', { headers: ADMIN })).data.data;
+    assert.equal(rows.find((r) => r.key === 'checkout.nextFailure').value, '');
+  });
+
+  test('webhooks can be delivered twice and held back', async () => {
+    await setSetting({ 'webhooks.duplicate': 'twice', 'webhooks.delaySeconds': 1 });
+    try {
+      await newPaytmOrder(client, 'dup_1');
+      const startedAt = Date.now();
+      await complete('paytm', 'dup_1', { method: 'upi', vpa: 'success@upi' });
+      const bodies = () => received.filter((x) => x.path === '/paytm' && x.body.includes('ORDERID=dup_1'));
+      await waitFor(() => bodies().length >= 2, 8000);
+      assert.equal(bodies().length, 2);
+      assert.ok(Date.now() - startedAt >= 900, 'first delivery waited for the delay');
+      assert.equal(bodies()[0].body, bodies()[1].body, 'both deliveries carry the same signed body');
+    } finally {
+      await setSetting({ 'webhooks.duplicate': null, 'webhooks.delaySeconds': null });
+    }
+  });
+
+  test('paytm: unpaid orders expire; expired orders reject payment', async () => {
+    await newPaytmOrder(client, 'exp_1');
+    const { objects } = await import('../src/db.js');
+    const o = objects.get('ptm:exp_1', 'order');
+    o.createdAt = Date.now() - 16 * 60 * 1000;
+    objects.put('paytm', 'order', 'ptm:exp_1', o);
+    // Paytm does not fail an abandoned order: status stays PENDING (402) and no callback is sent.
+    const status = await client.checkStatus('exp_1', { maxRetries: 1 });
+    assert.equal(status.status, 'PENDING');
+    const late = (await complete('paytm', 'exp_1', { method: 'upi', vpa: 'success@upi' })).data;
+    assert.equal(late.status, 'failed');
+    assert.equal(late.error.code, '1006');
+    assert.equal(received.some((x) => x.path === '/paytm' && x.body.includes('ORDERID=exp_1')), false, 'no webhook for an expired order');
+  });
+
+  test('paytm: refund status endpoint', async () => {
+    await newPaytmOrder(client, 'rf_1', 20000);
+    await complete('paytm', 'rf_1', { method: 'upi', vpa: 'success@upi' });
+    const st = await client.checkStatus('rf_1', { expectedAmount: 20000, maxRetries: 1 });
+    await client.createRefund({ originalOrderId: 'rf_1', refundId: 'rf_ref_1', amount: 20000, providerTransactionId: st.transactionId });
+    const sign = (body) => ({ body, head: { signature: paytm.generateChecksum(paytm.stableStringify(body)) } });
+    const body = { mid: config.paytm.merchantId, orderId: 'rf_1', refId: 'rf_ref_1' };
+    const first = (await call('POST', '/paytm/v2/refund/status', { json: sign(body) })).data;
+    assert.equal(first.body.resultInfo.resultStatus, 'PENDING');
+    await new Promise((r) => setTimeout(r, 1800));
+    const later = (await call('POST', '/paytm/v2/refund/status', { json: sign(body) })).data;
+    assert.equal(later.body.resultInfo.resultStatus, 'TXN_SUCCESS');
+    const unknown = (await call('POST', '/paytm/v2/refund/status', { json: sign({ ...body, refId: 'nope' }) })).data;
+    assert.equal(unknown.body.resultInfo.resultStatus, 'TXN_FAILURE');
+    assert.equal(unknown.body.resultInfo.resultCode, '631');
+    assert.equal(later.body.resultInfo.resultCode, '10');
+  });
+
+  test('paytm: signed the way Paytm\'s own library does, with the documented paths and codes', async () => {
+    const mid = config.paytm.merchantId;
+    // paytmchecksum signs JSON.stringify(body) exactly as sent, so key order is the caller's.
+    const post = (path, body, { sign = true } = {}) => {
+      const signature = sign ? paytm.generateChecksum(JSON.stringify(body)) : 'not-a-checksum';
+      return call('POST', path, { json: { body, head: { signature } } }).then((r) => r.data.body);
+    };
+    const init = (over = {}) => ({ requestType: 'Payment', mid, websiteName: 'WEBSTAGING', orderId: 'off_1', callbackUrl: 'https://app.example/cb', txnAmount: { value: '12.50', currency: 'INR' }, userInfo: { custId: 'CUST_1' }, ...over });
+
+    const first = await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=off_1`, init());
+    assert.equal(first.resultInfo.resultCode, '0000');
+    assert.equal(first.isPromoCodeValid, false);
+    const again = await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=off_1`, init());
+    assert.equal(again.resultInfo.resultCode, '0002', 'same request is idempotent');
+    assert.equal(again.txnToken, first.txnToken);
+    const changed = await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=off_1`, init({ txnAmount: { value: '99.00', currency: 'INR' } }));
+    assert.equal(changed.resultInfo.resultCode, '2023');
+    assert.equal((await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=off_1`, init(), { sign: false })).resultInfo.resultCode, '2005');
+    assert.equal((await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=other`, init())).resultInfo.resultCode, '2014');
+    assert.equal((await post(`/paytm/theia/api/v1/initiateTransaction?mid=${mid}&orderId=off_2`, init({ orderId: 'off_2', txnAmount: { value: '0.50', currency: 'INR' } }))).resultInfo.resultCode, '2007');
+
+    const status = (orderId) => post('/paytm/v3/order/status', { mid, orderId });
+    assert.deepEqual((await status('off_1')).resultInfo, { resultStatus: 'PENDING', resultCode: '400', resultMsg: 'Transaction status not confirmed yet.' });
+    assert.equal((await status('nope_1')).resultInfo.resultStatus, 'NO_RECORD_FOUND');
+    assert.equal((await status('nope_1')).resultInfo.resultCode, '331');
+
+    const refund = (over) => post('/paytm/refund/apply', { mid, txnType: 'REFUND', orderId: 'off_1', txnId: 'x', refId: 'off_r1', refundAmount: '5.00', ...over });
+    assert.equal((await refund({})).resultInfo.resultCode, '627', 'wrong txnId');
+    assert.equal((await refund({ orderId: 'nope_1' })).resultInfo.resultCode, '673');
+    assert.equal((await refund({ refundAmount: '' })).resultInfo.resultCode, '660');
+
+    await complete('paytm', 'off_1', { method: 'wallet', wallet: 'paytm' });
+    const paid = await status('off_1');
+    assert.equal(paid.resultInfo.resultCode, '01');
+    const ok = await refund({ txnId: paid.txnId });
+    assert.equal(ok.resultInfo.resultCode, '601');
+    assert.equal((await refund({ txnId: paid.txnId })).resultInfo.resultCode, '617', 'repeat refId while pending');
+    assert.equal((await refund({ txnId: paid.txnId, refId: 'off_r2', refundAmount: '500.00' })).resultInfo.resultCode, '674');
+    assert.equal((await refund({ txnId: paid.txnId, refId: 'off_r3', refundAmount: '0.50' })).resultInfo.resultCode, '635');
+    await new Promise((r) => setTimeout(r, 1800));
+    assert.equal((await refund({ txnId: paid.txnId })).resultInfo.resultCode, '629', 'repeat refId after it succeeded');
+  });
+
+  test('paytm: wallet shortfall and invalid UPI id use their own codes', async () => {
+    await newPaytmOrder(client, 'code_1');
+    await newPaytmOrder(client, 'code_2');
+    await setSetting({ 'checkout.nextFailure': 'insufficient_funds' });
+    assert.equal((await complete('paytm', 'code_1', { method: 'wallet', wallet: 'paytm' })).data.next.fields.RESPCODE, '235');
+    const badVpa = (await complete('paytm', 'code_2', { method: 'upi', vpa: 'not a vpa' })).data;
+    assert.equal(badVpa.next.fields.RESPCODE, '295');
+    assert.equal(badVpa.next.fields.STATUS, 'TXN_FAILURE');
+  });
+
+  test('paytm: upipay replay protection accepts fresh and rejects stale callbacks', async () => {
+    const fields = (txnDate) => {
+      const f = { CURRENCY: 'INR', GATEWAYNAME: '', RESPMSG: 'Txn Success', BANKNAME: '', PAYMENTMODE: 'UPI', MID: config.paytm.merchantId, RESPCODE: '01', TXNID: '1', TXNAMOUNT: '10.00', ORDERID: 'replay_1', STATUS: 'TXN_SUCCESS', BANKTXNID: '2', TXNDATE: txnDate };
+      f.CHECKSUMHASH = paytm.generateChecksum(paytm.paramsString(f));
+      return new URLSearchParams(f).toString();
+    };
+    const stamp = (ms) => new Date(ms + 330 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ') + '.0';
+    const opts = { enableReplayProtection: true, expectedAmount: 1000 };
+    const fresh = fields(stamp(Date.now()));
+    assert.equal(client.verifyWebhook(fresh, new URLSearchParams(fresh).get('CHECKSUMHASH'), opts).verified, true);
+    const stale = fields(stamp(Date.now() - 3600 * 1000));
+    assert.equal(client.verifyWebhook(stale, new URLSearchParams(stale).get('CHECKSUMHASH'), opts).verified, false);
+  });
+
+  test('phonepe v1: refund through upipay', async () => {
+    const { UPIPay } = await import('upipay');
+    const pp = new UPIPay({ provider: 'phonepe', environment: 'sandbox', credentials: { merchantId: config.phonepe.merchantId, saltKey: config.phonepe.saltKey, saltIndex: config.phonepe.saltIndex } });
+    await pp.createPayment({ amount: 30000, orderId: 'pay_phonepe_rf', customerPhone: '9876543210', callbackUrl: HOOK + '/phonepe-upipay-rf', redirectUrl: 'https://app.example/done' });
+    await complete('phonepe', 'pay_phonepe_rf', { method: 'upi', vpa: 'success@upi' });
+    const refund = await pp.createRefund({ originalOrderId: 'pay_phonepe_rf', refundId: 'refund_pp_1', amount: 10000, providerTransactionId: 'unused' });
+    assert.equal(refund.refundId, 'refund_pp_1');
+    assert.equal(refund.amount, 10000);
+    assert.ok(['SUCCESS', 'PENDING'].includes(refund.status), 'got ' + refund.status);
   });
 });
 

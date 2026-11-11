@@ -102,6 +102,14 @@ export const config = {
     webhookUrl: str(env.PHONEPE_WEBHOOK_URL, ''),
   },
 
+  paytm: {
+    merchantId: str(env.PAYTM_MERCHANT_ID, 'MOCKPAYTM00000000001'),
+    // The Paytm checksum uses the first 16 characters of this key as an AES-128 key.
+    merchantKey: str(env.PAYTM_MERCHANT_KEY, 'mockpaytmkey0001'),
+    website: str(env.PAYTM_WEBSITE, 'WEBSTAGING'),
+    webhookUrl: str(env.PAYTM_WEBHOOK_URL, ''),
+  },
+
   generic: {
     apiKey: str(env.GENERIC_API_KEY, 'mock_generic_api_key'),
     apiSecret: str(env.GENERIC_API_SECRET, 'mock_generic_api_secret'),

@@ -7,6 +7,7 @@
   var drawer = document.getElementById('drawer');
   var drawerTitle = document.getElementById('drawer-title');
   var drawerBody = document.getElementById('drawer-body');
+  var densityBtn = document.getElementById('density');
 
   var TITLES = { overview: 'Overview', sms: 'SMS inbox', emails: 'Email inbox', payments: 'Payments', webhooks: 'Webhook deliveries', settings: 'Settings' };
   var CLEAR_SCOPE = { sms: 'sms', emails: 'emails', payments: 'payments', webhooks: 'webhooks' };
@@ -61,7 +62,69 @@
   function json(o) { return '<pre>' + esc(JSON.stringify(o, null, 2)) + '</pre>'; }
   function table(heads, rows, empty) {
     if (!rows.length) return '<div class="panel"><div class="empty">' + empty + '</div></div>';
-    return '<div class="panel table-wrap"><table><thead><tr>' + heads.map(function (h) { return '<th>' + h + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+    return '<div class="panel table-wrap"><table><thead><tr>' + heads.map(function (h, i) { return '<th><button type="button" class="sort" data-sort-col="' + i + '">' + h + '</button></th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+  }
+  var selectedProvider = null;
+  function groupOf(name) {
+    if (/Twilio|MSG91|SMS/.test(name)) return 'SMS and OTP';
+    if (/SMTP|SendGrid|Resend|SES/.test(name)) return 'Email';
+    return 'Payments';
+  }
+  // Paytm and PhonePe v1 are driven by the upipay SDK, which cannot change its API host, so the repo ships a fetch shim.
+  function snippetFor(p, url) {
+    var cr = p.credentials || {};
+    if (p.name === 'Paytm' || p.name === 'PhonePe v1') {
+      var paytm = p.name === 'Paytm';
+      var creds = paytm
+        ? "merchantId: '" + cr.merchant_id + "', merchantKey: '" + cr.merchant_key + "'"
+        : "merchantId: '" + cr.merchant_id + "', saltKey: '" + cr.salt_key + "', saltIndex: '" + cr.salt_index + "'";
+      var lines = [
+        '# scripts/upipay-shim.mjs sends upipay sandbox calls to this server',
+        'MOCK_GATEWAY_URL=' + url + ' node --import ./upipay-shim.mjs server.js',
+        '',
+        'const client = new UPIPay({',
+        "  provider: '" + (paytm ? 'paytm' : 'phonepe') + "',",
+        "  environment: 'sandbox',",
+        '  credentials: { ' + creds + ' },',
+        '});',
+      ];
+      if (paytm) lines.push('', '// Paytm builds paymentUrl from its own host.', '// Send the customer to toMock(payment.paymentUrl).');
+      return { title: 'Use with the upipay SDK', text: lines.join('\n') };
+    }
+    var env = [['BASE_URL', p.base_url]].concat(Object.keys(cr).map(function (k) { return [k.toUpperCase(), cr[k]]; }));
+    if (p.sdk) env.splice(1, 0, ['SDK_URL', p.sdk]);
+    return { title: 'As environment variables', text: env.map(function (e) { return e[0] + '=' + e[1]; }).join('\n') };
+  }
+  var sortState = {};
+  function cellKey(td) {
+    var t = (td.getAttribute('data-sort') || td.textContent).trim();
+    var n = /^[^a-z]*[0-9]/i.test(t) ? parseFloat(t.replace(/[^0-9.-]/g, '')) : NaN;
+    return { t: t.toLowerCase(), n: isNaN(n) ? null : n };
+  }
+  function applySort() {
+    var tb = view.querySelector("tbody");
+    if (!tb) return;
+    var st = sortState[tab];
+    view.querySelectorAll('th').forEach(function (th, i) {
+      if (st && st.i === i) th.setAttribute('aria-sort', st.dir === 1 ? 'ascending' : 'descending'); else th.removeAttribute('aria-sort');
+    });
+    if (!st) return;
+    var rows = Array.prototype.slice.call(tb.rows);
+    rows.sort(function (a, b) {
+      var x = cellKey(a.cells[st.i]), y = cellKey(b.cells[st.i]);
+      var c = x.n !== null && y.n !== null ? x.n - y.n : x.t < y.t ? -1 : x.t > y.t ? 1 : 0;
+      return c * st.dir;
+    });
+    rows.forEach(function (r) { tb.appendChild(r); });
+  }
+  function shq(s) { return "'" + String(s).replace(/'/g, "'" + '\\' + "''") + "'"; }
+  // A shell command that replays a captured webhook against your own endpoint.
+  function curlFor(w) {
+    var h = Object.assign({ 'Content-Type': w.content_type || 'application/json' }, w.last_request_headers || w.headers || {});
+    var parts = ['curl -X POST ' + shq(w.url)];
+    Object.keys(h).forEach(function (k) { parts.push('-H ' + shq(k + ': ' + h[k])); });
+    parts.push('--data-raw ' + shq(w.body));
+    return parts.join(' \\\n  ');
   }
   function q() { var v = search.value.trim(); return v ? '&q=' + encodeURIComponent(v) : ''; }
 
@@ -71,22 +134,33 @@
     overview: function () {
       return Promise.all([api('/stats'), api('/config')]).then(function (r) {
         var s = r[0], c = r[1];
-        var cards = [['SMS', s.sms], ['Emails', s.emails], ['Payments', s.payments], ['Paid', s.paid], ['Webhooks', s.webhooks], ['Webhook failures', s.webhooks_failed]];
-        return '<div class="cards">' + cards.map(function (x) { return '<div class="card"><div class="k">' + x[0] + '</div><div class="v">' + x[1] + '</div></div>'; }).join('') + '</div>' +
-          '<h4>Integration endpoints &amp; test credentials</h4><div class="cfg-grid">' + c.providers.map(function (p) {
-            var rows = [['Base URL', p.base_url]];
-            if (p.sdk) rows.push(['JS SDK', p.sdk]);
-            Object.keys(p.credentials).forEach(function (k) { rows.push([k, p.credentials[k]]); });
-            if (p.note) rows.push(['Note', p.note]);
-            return '<div class="cfg"><h4>' + esc(p.name) + '</h4>' + rows.map(function (x) { return '<div class="row"><span>' + esc(x[0]) + '</span><code data-copy="' + esc(x[1]) + '">' + esc(x[1]) + '</code></div>'; }).join('') + '</div>';
-          }).join('') + '</div>';
+        var tally = [['SMS received', s.sms], ['Emails received', s.emails], ['Payments', s.payments], ['Paid', s.paid], ['Webhooks sent', s.webhooks], ['Webhook failures', s.webhooks_failed, s.webhooks_failed > 0]];
+        var sel = c.providers.filter(function (p) { return p.name === selectedProvider; })[0] || c.providers[0];
+        var order = ['Payments', 'SMS and OTP', 'Email'], groups = {};
+        c.providers.forEach(function (p) { (groups[groupOf(p.name)] = groups[groupOf(p.name)] || []).push(p); });
+        var list = order.filter(function (g) { return groups[g]; }).map(function (g) {
+          return '<div class="pgroup">' + g + '</div>' + groups[g].map(function (p) {
+            return '<button type="button" class="pitem' + (p === sel ? ' active' : '') + '" data-provider="' + esc(p.name) + '" aria-pressed="' + (p === sel) + '">' + esc(p.name) + '</button>';
+          }).join('');
+        }).join('');
+        var rows = [['Base URL', sel.base_url]];
+        if (sel.sdk) rows.push(['JS SDK', sel.sdk]);
+        Object.keys(sel.credentials).forEach(function (k) { rows.push([k, sel.credentials[k]]); });
+        var code = snippetFor(sel, c.public_url);
+        return '<div class="tally">' + tally.map(function (x) { return '<div class="' + (x[2] ? 'bad' : '') + '"><div class="v num">' + x[1] + '</div><div class="k">' + x[0] + '</div></div>'; }).join('') + '</div>' +
+          '<div class="section-head"><h2>Connect your app</h2><p>Pick a provider. Click any value to copy it.</p></div>' +
+          '<div class="connect"><div class="plist">' + list + '</div><div class="pdetail"><h3>' + esc(sel.name) + '</h3>' +
+          (sel.note ? '<p class="note">' + esc(sel.note) + '</p>' : '') +
+          rows.map(function (x) { return '<div class="cfg-row"><span>' + esc(x[0]) + '</span><code data-copy="' + esc(x[1]) + '">' + esc(x[1]) + '</code></div>'; }).join('') +
+          '<div class="snippet-head"><h4>' + esc(code.title) + '</h4><button type="button" class="btn ghost sm" data-copy="' + esc(code.text) + '">Copy</button></div>' +
+          '<pre class="snippet">' + esc(code.text) + '</pre></div></div>';
       });
     },
 
     sms: function () {
       return api('/sms?limit=200' + q()).then(function (r) {
         return table(['When', 'To', 'Message', 'OTP', 'Provider', 'Status'], r.data.map(function (m) {
-          return '<tr data-open="sms" data-id="' + m.id + '" class="' + (fresh[m.id] ? 'fresh' : '') + '"><td class="nowrap muted">' + ago(m.created_at) + '</td><td class="mono nowrap">' + esc(m.to_addr) + (m.channel !== 'sms' ? ' <span class="pill">' + esc(m.channel) + '</span>' : '') + '</td>' +
+          return '<tr tabindex="0" data-open="sms" data-id="' + m.id + '" class="' + (fresh[m.id] ? 'fresh' : '') + '"><td class="nowrap muted" data-sort="' + m.created_at + '">' + ago(m.created_at) + '</td><td class="mono nowrap">' + esc(m.to_addr) + (m.channel !== 'sms' ? ' <span class="pill">' + esc(m.channel) + '</span>' : '') + '</td>' +
             '<td class="clip">' + esc(m.body) + '</td><td>' + (m.otp ? '<span class="otp" data-copy="' + esc(m.otp) + '">' + esc(m.otp) + '</span>' : '') + '</td><td>' + esc(m.provider) + '</td><td>' + pill(m.status) + '</td></tr>';
         }), 'No SMS yet. Messages sent through Twilio, MSG91 or the generic API appear here instantly.');
       });
@@ -95,7 +169,7 @@
     emails: function () {
       return api('/emails?limit=200' + q()).then(function (r) {
         return table(['When', 'To', 'Subject', 'OTP', 'From', 'Provider'], r.data.map(function (e) {
-          return '<tr data-open="email" data-id="' + e.id + '" class="' + (fresh[e.id] ? 'fresh' : '') + '"><td class="nowrap muted">' + ago(e.created_at) + '</td><td class="mono clip" style="max-width:220px">' + esc(e.to.map(function (a) { return a.address; }).join(', ')) + '</td>' +
+          return '<tr tabindex="0" data-open="email" data-id="' + e.id + '" class="' + (fresh[e.id] ? 'fresh' : '') + '"><td class="nowrap muted" data-sort="' + e.created_at + '">' + ago(e.created_at) + '</td><td class="mono clip" style="max-width:220px">' + esc(e.to.map(function (a) { return a.address; }).join(', ')) + '</td>' +
             '<td class="clip"><b>' + esc(e.subject || '(no subject)') + '</b> <span class="muted">' + esc(e.snippet) + '</span></td><td>' + (e.otp ? '<span class="otp" data-copy="' + esc(e.otp) + '">' + esc(e.otp) + '</span>' : '') + '</td>' +
             '<td class="clip" style="max-width:200px">' + esc(e.from) + '</td><td>' + esc(e.provider) + '</td></tr>';
         }), 'No email yet. Point SMTP, SendGrid, Resend or SES at this server.');
@@ -105,7 +179,7 @@
     payments: function () {
       return api('/payments?limit=200' + q()).then(function (r) {
         return table(['When', 'ID', 'Provider', 'Amount', 'Status', 'Method', 'Reference'], r.data.map(function (p) {
-          return '<tr data-open="payment" data-id="' + esc(p.id) + '" class="' + (fresh[p.id] ? 'fresh' : '') + '"><td class="nowrap muted">' + ago(p.created_at) + '</td><td class="mono nowrap">' + esc(p.checkout_id) + '</td><td>' + esc(p.provider) + '</td>' +
+          return '<tr tabindex="0" data-open="payment" data-id="' + esc(p.id) + '" class="' + (fresh[p.id] ? 'fresh' : '') + '"><td class="nowrap muted" data-sort="' + p.created_at + '">' + ago(p.created_at) + '</td><td class="mono nowrap">' + esc(p.checkout_id) + '</td><td>' + esc(p.provider) + '</td>' +
             '<td class="nowrap"><b>' + money(p.amount, p.currency) + '</b></td><td>' + pill(p.status) + '</td><td>' + esc(p.method || '') + '</td><td class="mono">' + esc(p.reference || '') + '</td></tr>';
         }), 'No payments yet. Create an order / session / intent through any gateway API.');
       });
@@ -114,9 +188,9 @@
     webhooks: function () {
       return api('/webhooks?limit=200').then(function (r) {
         return table(['When', 'Provider', 'Event', 'URL', 'Status', 'Attempts', 'HTTP'], r.data.map(function (w) {
-          return '<tr data-open="webhook" data-id="' + w.id + '" class="' + (fresh[w.id] ? 'fresh' : '') + '"><td class="nowrap muted">' + ago(w.created_at) + '</td><td>' + esc(w.provider) + '</td><td class="mono">' + esc(w.event) + '</td>' +
+          return '<tr tabindex="0" data-open="webhook" data-id="' + w.id + '" class="' + (fresh[w.id] ? 'fresh' : '') + '"><td class="nowrap muted" data-sort="' + w.created_at + '">' + ago(w.created_at) + '</td><td>' + esc(w.provider) + '</td><td class="mono">' + esc(w.event) + '</td>' +
             '<td class="clip mono" style="max-width:280px">' + esc(w.url || '— not configured —') + '</td><td>' + pill(w.status) + '</td><td>' + w.attempts + '</td><td class="mono">' + esc(w.last_status || w.last_error || '') + '</td></tr>';
-        }), 'No webhook deliveries yet.');
+        }), 'No webhook deliveries yet. Set a webhook URL under Settings, then complete a payment.');
       });
     },
 
@@ -124,7 +198,7 @@
       return api('/settings').then(function (r) {
         return '<div class="panel"><h3>Runtime settings</h3><div class="panel-body"><form class="settings-form" id="settings-form">' + r.data.map(function (s) {
           var input = s.type === 'enum'
-            ? '<select class="input" name="' + s.key + '">' + s.values.map(function (v) { return '<option' + (v === s.value ? ' selected' : '') + '>' + v + '</option>'; }).join('') + '</select>'
+            ? '<select class="input" name="' + s.key + '">' + s.values.map(function (v) { return '<option value="' + esc(v) + '"' + (v === s.value ? ' selected' : '') + '>' + esc(v ? v.replace(/_/g, ' ') : 'None') + '</option>'; }).join('') + '</select>'
             : '<input class="input" name="' + s.key + '" value="' + esc(s.value) + '" placeholder="' + esc(s.type === 'url' ? 'https://your-app/webhooks/...' : '') + '">';
           return '<div class="field"><div>' + esc(s.label) + '<small><code>' + esc(s.key) + '</code>' + (s.overridden ? ', overridden (env default: ' + esc(s.default || '—') + ')' : '') + '</small></div>' + input +
             (s.overridden ? '<button type="button" class="btn ghost sm" data-reset="' + s.key + '">Reset</button>' : '<span></span>') + '</div>';
@@ -179,7 +253,7 @@
         drawerTitle.textContent = w.provider + ': ' + w.event;
         return '<dl class="kv"><dt>URL</dt><dd class="mono">' + esc(w.url || '— not configured —') + '</dd><dt>Status</dt><dd>' + pill(w.status) + '</dd><dt>Attempts</dt><dd>' + w.attempts + '</dd>' +
           '<dt>Last HTTP</dt><dd>' + esc(w.last_status || '—') + '</dd><dt>Last error</dt><dd>' + esc(w.last_error || '—') + '</dd>' + (w.next_attempt_at ? '<dt>Next attempt</dt><dd>' + new Date(w.next_attempt_at).toLocaleString() + '</dd>' : '') + '</dl>' +
-          '<div class="actions"><button class="btn sm" data-retry="' + w.id + '">Redeliver now</button></div>' +
+          '<div class="actions"><button class="btn sm" data-retry="' + w.id + '">Redeliver now</button>' + (w.url ? '<button class="btn ghost sm" data-copy="' + esc(curlFor(w)) + '">Copy as curl</button>' : '') + '</div>' +
           '<h4>Request headers</h4>' + json(w.last_request_headers || w.headers) + '<h4>Body</h4>' + (w.body_json ? json(w.body_json) : '<pre>' + esc(w.body) + '</pre>') +
           (w.last_response ? '<h4>Last response</h4><pre>' + esc(w.last_response) + '</pre>' : '');
       });
@@ -200,7 +274,7 @@
   function load() {
     if (loading) { pending = true; return; }
     loading = true;
-    views[tab]().then(function (html) { view.innerHTML = html; }).catch(function (e) { view.innerHTML = '<div class="panel"><div class="empty">' + esc(e.message) + '</div></div>'; })
+    views[tab]().then(function (html) { view.innerHTML = html; applySort(); }).catch(function (e) { view.innerHTML = '<div class="panel"><div class="empty">' + esc(e.message) + '</div></div>'; })
       .then(function () { loading = false; if (pending) { pending = false; load(); } });
   }
   function route() {
@@ -210,6 +284,7 @@
     document.querySelectorAll('#nav a').forEach(function (a) { a.classList.toggle('active', a.getAttribute('data-tab') === tab); });
     search.style.display = ['sms', 'emails', 'payments'].indexOf(tab) >= 0 ? '' : 'none';
     document.getElementById('clear').style.display = CLEAR_SCOPE[tab] ? '' : 'none';
+    densityBtn.style.display = CLEAR_SCOPE[tab] ? '' : 'none';
     load();
   }
   window.addEventListener('hashchange', route);
@@ -233,6 +308,14 @@
       navigator.clipboard && navigator.clipboard.writeText(copy.getAttribute('data-copy')).then(function () { toast('Copied'); });
       return;
     }
+    var srt = t.closest('[data-sort-col]');
+    if (srt) {
+      var col = +srt.getAttribute('data-sort-col'), cur = sortState[tab];
+      sortState[tab] = cur && cur.i === col ? (cur.dir === 1 ? { i: col, dir: -1 } : null) : { i: col, dir: 1 };
+      return applySort();
+    }
+    var prov = t.closest('[data-provider]');
+    if (prov) { selectedProvider = prov.getAttribute('data-provider'); return load(); }
     var open = t.closest('[data-open]');
     if (open) { ev.preventDefault(); return showDetail(open.getAttribute('data-open'), open.getAttribute('data-id')); }
     var et = t.closest('[data-etab]');
@@ -278,6 +361,24 @@
     api('/settings', { method: 'PUT', body: patch }).then(function () { toast('Settings saved'); load(); }).catch(function (e) { toast(e.message); });
   });
 
+  var compact = false;
+  try { compact = localStorage.getItem('mg_compact') === '1'; } catch (e) { /* storage unavailable */ }
+  function applyDensity() {
+    document.body.classList.toggle('compact', compact);
+    densityBtn.setAttribute('aria-pressed', String(compact));
+  }
+  densityBtn.addEventListener('click', function () {
+    compact = !compact;
+    try { localStorage.setItem('mg_compact', compact ? '1' : '0'); } catch (e) { /* ignore */ }
+    applyDensity();
+  });
+  applyDensity();
+
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' || ev.target.tagName !== 'TR' || !ev.target.hasAttribute('data-open')) return;
+    showDetail(ev.target.getAttribute('data-open'), ev.target.getAttribute('data-id'));
+  });
+
   var clearBtn = document.getElementById('clear');
   clearBtn.addEventListener('click', function () {
     if (clearBtn.getAttribute('data-armed') !== '1') {
@@ -304,8 +405,8 @@
   function connect() {
     var es = new EventSource('/api/stream');
     var dot = document.getElementById('live-dot'), txt = document.getElementById('live-text');
-    es.onopen = function () { dot.classList.add('on'); txt.textContent = 'live'; };
-    es.onerror = function () { dot.classList.remove('on'); txt.textContent = 'reconnecting…'; };
+    es.onopen = function () { dot.classList.add('on'); txt.textContent = 'Live'; };
+    es.onerror = function () { dot.classList.remove('on'); txt.textContent = 'Reconnecting'; };
     ['sms', 'email', 'otp', 'webhook', 'payment'].forEach(function (type) {
       es.addEventListener(type, function (m) {
         var e = JSON.parse(m.data);
@@ -322,7 +423,7 @@
   fetch('/api/session', { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
     if (!s) return;
     document.getElementById('who').textContent = s.username;
-    document.querySelector('.side-foot .avatar').textContent = s.username.charAt(0).toUpperCase();
+    document.querySelector('.rail-foot .avatar').textContent = s.username.charAt(0).toUpperCase();
   }).catch(function () {});
   document.getElementById('logout').addEventListener('click', function () {
     fetch('/logout', { method: 'POST', headers: { Accept: 'application/json' }, credentials: 'same-origin' }).then(function () {

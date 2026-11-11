@@ -34,6 +34,20 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+  ui:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      # ubuntu-latest ships Google Chrome; playwright-core drives it, so nothing is downloaded.
+      - run: npm run test:ui
+
   docker:
     name: Docker build & smoke test
     runs-on: ubuntu-latest

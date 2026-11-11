@@ -6,7 +6,7 @@ It copies the **real provider APIs**, so the app keeps its normal integration co
 
 | Area | Providers emulated |
 |---|---|
-| Payments | **Razorpay** (orders, payments, capture, refunds, payment links, `checkout.js`), **Stripe** (PaymentIntents, 3DS, Checkout Sessions, refunds, customers, events, idempotency), **Cashfree PG** (2023-08-01 orders/payments/refunds, `cashfree.js`), **PhonePe** v1 (X-VERIFY) and v2 (OAuth, `PhonePeCheckout`), **Generic** REST API |
+| Payments | **Razorpay** (orders, payments, capture, refunds, payment links, `checkout.js`), **Stripe** (PaymentIntents, 3DS, Checkout Sessions, refunds, customers, events, idempotency), **Cashfree PG** (2023-08-01 orders/payments/refunds, `cashfree.js`), **PhonePe** v1 (X-VERIFY) and v2 (OAuth, `PhonePeCheckout`), **Paytm** (initiate, status, refund, signed callback; used by the [`upipay`](https://github.com/iamrobinsharaya/upipay) SDK), **Generic** REST API |
 | SMS / OTP | **Twilio** Messaging + Verify v2, **MSG91** (Flow, OTP send/verify/retry, sendhttp), **Generic** SMS/OTP API |
 | Email | **SMTP** capture server, **SendGrid** v3, **Resend**, **AWS SES** v2 + v1 Query API, **Generic** email API |
 
@@ -66,7 +66,7 @@ open http://localhost:4000/dashboard     # sign in with ADMIN_USERNAME / ADMIN_P
 
 Data is stored in the `mock-gateway-data` volume (`/data/mock-gateway.db`). Records older than `RETENTION_DAYS` (default 7) are deleted automatically.
 
-Local without Docker (Node ≥ 22.13): `npm ci && npm start`. Tests: `npm test`.
+Local without Docker (Node ≥ 22.13): `npm ci && npm start`. Tests: `npm test`. Browser smoke test (uses the Chrome on your machine): `npm run test:ui`. To refresh the screenshots above, run `MOCK_URL=… ADMIN_PASSWORD=… node scripts/capture-screenshots.mjs`.
 
 ---
 
@@ -182,6 +182,37 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, process.env.STRIPE_MOCK
   - Webhook `Authorization` is `sha256(username:password)`.
   - Iframe mode: load `$MOCK/phonepe/checkout.js` and call `PhonePeCheckout.transact({ tokenUrl, type: 'IFRAME', callback })`.
 
+### Paytm and the upipay SDK
+
+> **Check before you rely on it.** PhonePe's docs say the v1 (salt key) flow is deprecated and that v1 credentials can no longer be generated, so upipay's PhonePe adapter only works for merchants who already have a salt key. For Paytm, upipay sends refunds to `/v3/order/refund`, while Paytm's published refund API is `POST /refund/apply` on `securegw-stage.paytmpayments.in`. The mock accepts both paths. Verify upipay's refund call against Paytm's real sandbox before you ship it.
+
+[`upipay`](https://github.com/iamrobinsharaya/upipay) is a Node SDK for PhonePe Business and Paytm Business. It hardcodes the PSP hosts and has no base-URL option, so this repo ships a fetch shim, `scripts/upipay-shim.mjs`, that sends its sandbox calls to the mock:
+
+```bash
+MOCK_GATEWAY_URL=http://localhost:4000 node --import ./scripts/upipay-shim.mjs server.js
+```
+
+- **PhonePe** (`provider: 'phonepe'`) uses the v1 endpoints above. Credentials: `PHONEPE_MERCHANT_ID`, `PHONEPE_SALT_KEY`, `PHONEPE_SALT_INDEX`.
+- **Paytm** (`provider: 'paytm'`) base: `$MOCK/paytm`. Endpoints: `POST /theia/api/v1/initiateTransaction`, `GET|POST /theia/api/v1/showPaymentPage`, `POST /v3/order/status`, `POST /refund/apply` (also `/v3/order/refund`), `POST /v2/refund/status`. Result codes and fields follow Paytm's published API reference; a few are not documented there (a user-cancelled payment returns `141`, and a malformed `orderId` returns `1007`), so treat those as the mock's own. Credentials: `PAYTM_MERCHANT_ID`, `PAYTM_MERCHANT_KEY` (16 or more characters, the first 16 are the AES key).
+  - Request and response signatures use Paytm's checksum (SHA-256 of the sorted values, AES-128-CBC encrypted). A wrong merchant key is rejected.
+  - After payment the browser is POSTed to `callbackUrl` with `ORDERID`, `TXNID`, `TXNAMOUNT`, `STATUS` (`TXN_SUCCESS` or `TXN_FAILURE`), `RESPCODE` and `CHECKSUMHASH`. The same fields are also posted to `PAYTM_WEBHOOK_URL` (or Settings, `paytm.webhookUrl`) as a form body.
+  - upipay builds Paytm's `paymentUrl` from the real Paytm host. Send the customer to `toMock(payment.paymentUrl)`, which the shim exports.
+  - Refunds return `PENDING` first and settle after about 1.5 seconds. `POST /v2/refund/status` reports the final state.
+  - An unpaid order's `txnToken` lasts 15 minutes. After that the payment page refuses it (`Your Session has expired`) and status returns `PENDING` / `402`. Paytm sends no failure callback for it, so the mock sends none. `TXNDATE` is in IST, like the real gateway, so upipay's `enableReplayProtection` works.
+  - Repeating `initiateTransaction` with the same data returns `0002` (Success Idempotent) and the same token; changed data returns `2023`. A bad checksum is `2005` on initiate and `330` elsewhere. Both the official library's insertion-order signing and upipay's sorted signing are accepted.
+- Tests run the real `upipay` package against the mock (`npm test`).
+
+### Failure injection (Settings tab)
+
+Make your app handle the bad paths without writing mocks:
+
+| Setting | Effect |
+|---|---|
+| `checkout.nextFailure` | The next payment that would succeed fails with the chosen error (declined, insufficient funds, expired card, bank declined, and so on). It resets itself after one use. |
+| `webhooks.duplicate` | `twice` delivers every webhook two times with the same signed body. Use it to prove your handler is idempotent. |
+| `webhooks.delaySeconds` | Holds every webhook for this many seconds before the first delivery, so you can test a callback that arrives after the redirect. |
+| `api.latencyMs`, `api.failureRate` | Slow or randomly failing provider APIs. |
+
 ### Generic payments (`Authorization: Bearer GENERIC_API_KEY`)
 
 ```http
@@ -291,7 +322,7 @@ await page.fill('#otp', otp);
 ```
 src/
   server.js, app.js, config.js, db.js (node:sqlite), webhooks.js (durable queue), settings.js, store.js
-  payments/  razorpay, stripe, cashfree, phonepe, generic, simulator (outcome rules), checkout (pages + SDKs)
+  payments/  razorpay, stripe, cashfree, phonepe, paytm, generic, simulator (outcome rules), checkout (pages + SDKs)
   sms/       twilio, msg91, generic (SMS/OTP/email)
   email/     smtp (capture server), http (SendGrid, Resend, SES)
   admin/     api.js (dashboard + test automation API, retention)

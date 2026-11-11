@@ -204,6 +204,8 @@ function v2PaymentDetail(order, result) {
     transactionId: `OM${randDigits(20)}`,
     timestamp: Date.now(),
     amount: order.amount,
+    payableAmount: order.amount,
+    feeAmount: 0,
     state: ok ? 'COMPLETED' : 'FAILED',
     splitInstruments: [
       {
@@ -217,13 +219,17 @@ function v2PaymentDetail(order, result) {
   return detail;
 }
 
+// PhonePe always returns udf1..udf15, empty when the merchant sent nothing.
+const metaOf = (m) => Object.assign(Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`udf${i + 1}`, ''])), m || {});
+
 function v2OrderView(o) {
   return {
     orderId: o.orderId,
     state: o.state,
     amount: o.amount,
+    ...(o.state === 'COMPLETED' ? { payableAmount: o.amount, feeAmount: 0 } : {}),
     expireAt: o.expireAt,
-    metaInfo: o.metaInfo,
+    metaInfo: metaOf(o.metaInfo),
     ...(o.state === 'FAILED' && o.paymentDetails.length ? { errorCode: o.paymentDetails.at(-1).errorCode, detailedErrorCode: o.paymentDetails.at(-1).detailedErrorCode } : {}),
     paymentDetails: o.paymentDetails,
   };
@@ -275,9 +281,13 @@ router.post(v2('/checkout/v2/pay'), v2Auth, (req, res) => {
 
 router.get(v2('/checkout/v2/order/:moid/status'), v2Auth, (req, res) => {
   const o = objects.get(`ppv2:${req.params.moid}`);
-  if (!o) return v2Error(res, 404, 'ORDER_NOT_FOUND', 'No order found for the given merchantOrderId');
+  if (!o) return v2Error(res, 404, 'INVALID_MERCHANT_ORDER_ID', 'No entry found for given merchant order id');
   expireV2(o);
   const view = v2OrderView(o);
+  if (req.query.errorContext === 'true' && o.state === 'FAILED') {
+    const last = o.paymentDetails.at(-1) || {};
+    view.errorContext = { errorCode: last.errorCode, detailedErrorCode: last.detailedErrorCode, source: 'CUSTOMER', stage: 'AUTHENTICATION', description: o.lastErrorMessage || 'Payment failed' };
+  }
   if (req.query.details !== 'true' && view.paymentDetails.length > 1) view.paymentDetails = view.paymentDetails.slice(-1);
   res.json(view);
 });
@@ -301,7 +311,8 @@ function refundV2(o, { amount, mrid }) {
   if (o.state !== 'COMPLETED') return { error: 'Order is not completed' };
   if (!/^[A-Za-z0-9_-]{1,63}$/.test(mrid)) return { error: 'merchantRefundId is invalid' };
   if (objects.get(`ppv2refund:${mrid}`)) return { error: 'Duplicate merchantRefundId' };
-  if (!Number.isInteger(amount) || amount <= 0 || amount > o.amount - o.refunded) return { error: 'Refund amount exceeds refundable amount' };
+  if (!Number.isInteger(amount) || amount < 100) return { error: 'amount must be an integer in paise, at least 100' };
+  if (amount > o.amount - o.refunded) return { error: 'Refund amount exceeds refundable amount' };
   const refund = {
     originalMerchantOrderId: o.merchantOrderId,
     merchantRefundId: mrid,
@@ -316,6 +327,7 @@ function refundV2(o, { amount, mrid }) {
   objects.put(P2, 'refund', `ppv2refund:${mrid}`, refund, { parent: `ppv2:${o.merchantOrderId}` });
   setTimeout(() => {
     refund.state = 'COMPLETED';
+    refund.splitInstruments = (o.paymentDetails.at(-1)?.splitInstruments || []).map((s) => ({ ...s, amount }));
     refund.paymentDetails = [{ paymentMode: o.paymentDetails.at(-1)?.paymentMode, transactionId: `OM${randDigits(20)}`, timestamp: Date.now(), amount, state: 'COMPLETED' }];
     objects.put(P2, 'refund', `ppv2refund:${mrid}`, refund);
     updateCheckoutStatus(`ppv2:${o.merchantOrderId}`, o.refunded >= o.amount ? 'refunded' : 'partially_refunded');
@@ -447,6 +459,7 @@ export const adapterV2 = {
     if (!o || o.state !== 'PENDING') return { status: 'failed', error: { message: 'Order is no longer pending' } };
     const ok = result.status === 'success';
     const detail = v2PaymentDetail(o, result);
+    if (!ok) o.lastErrorMessage = result.error.message;
     o.paymentDetails.push(detail);
     o.state = ok ? 'COMPLETED' : 'FAILED';
     objects.put(P2, 'order', `ppv2:${id}`, o);

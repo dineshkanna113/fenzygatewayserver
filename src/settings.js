@@ -11,11 +11,15 @@ const DEFINITIONS = {
   'stripe.webhookUrl': { type: 'url', label: 'Stripe webhook URL', default: () => config.stripe.webhookUrl },
   'cashfree.webhookUrl': { type: 'url', label: 'Cashfree webhook URL (used when order has no notify_url)', default: () => config.cashfree.webhookUrl },
   'phonepe.webhookUrl': { type: 'url', label: 'PhonePe v2 webhook URL', default: () => config.phonepe.webhookUrl },
+  'paytm.webhookUrl': { type: 'url', label: 'Paytm webhook URL (server-to-server form POST)', default: () => config.paytm.webhookUrl },
   'generic.webhookUrl': { type: 'url', label: 'Generic payments webhook URL (used when payment has no webhook_url)', default: () => config.generic.webhookUrl },
   'msg91.dlrUrl': { type: 'url', label: 'MSG91 delivery report URL', default: () => config.msg91.dlrUrl },
   'api.latencyMs': { type: 'int', label: 'Artificial latency added to provider API calls (ms)', default: () => 0 },
   'api.failureRate': { type: 'int', label: 'Random 5xx failure rate for provider APIs (0-100 %)', default: () => 0 },
   'checkout.upiAutoApproveSeconds': { type: 'int', label: 'UPI collect auto-approve after (seconds, 0 = manual)', default: () => 8 },
+  'checkout.nextFailure': { type: 'enum', values: ['', 'card_declined', 'insufficient_funds', 'expired_card', 'incorrect_cvc', 'processing_error', 'authentication_failed', 'bank_declined', 'upi_declined', 'wallet_declined'], label: 'Fail the next successful checkout payment with this error (one shot, then resets)', default: () => '' },
+  'webhooks.delaySeconds': { type: 'int', label: 'Hold every webhook for this many seconds before the first delivery', default: () => 0 },
+  'webhooks.duplicate': { type: 'enum', values: ['off', 'twice'], label: 'Deliver every webhook twice (tests idempotent handlers)', default: () => 'off' },
   'sms.deliveryStatus': { type: 'enum', values: ['delivered', 'failed', 'undelivered'], label: 'Simulated SMS delivery status', default: () => 'delivered' },
 };
 

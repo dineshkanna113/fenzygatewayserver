@@ -1,5 +1,6 @@
 import * as cashfree from './cashfree.js';
 import * as generic from './generic.js';
+import * as paytm from './paytm.js';
 import * as phonepe from './phonepe.js';
 import * as razorpay from './razorpay.js';
 import * as stripe from './stripe.js';
@@ -11,10 +12,11 @@ export const adapters = {
   cashfree: cashfree.adapter,
   phonepe: phonepe.adapter,
   phonepe2: phonepe.adapterV2,
+  paytm: paytm.adapter,
   generic: generic.adapter,
 };
 
-const PREFIX = { cashfree: 'cf:', phonepe: 'ppv1:', phonepe2: 'ppv2:' };
+const PREFIX = { paytm: 'ptm:', cashfree: 'cf:', phonepe: 'ppv1:', phonepe2: 'ppv2:' };
 
 /** Dashboard index rows use namespaced ids for providers whose ids are merchant-chosen. */
 export function checkoutIdFor(provider, indexId) {

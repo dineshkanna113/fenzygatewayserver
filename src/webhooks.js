@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { q, parseJson } from './db.js';
 import { emit } from './events.js';
+import { getSetting } from './settings.js';
 import { log, rand } from './util.js';
 
 /**
@@ -14,7 +15,12 @@ export function registerSigner(name, fn) {
 
 const BACKOFF_MS = [0, 5_000, 30_000, 120_000, 600_000, 1_800_000, 3_600_000];
 
-export function enqueue({ provider, event, url, body, contentType = 'application/json', headers = {}, signer = null, ref = null, delayMs = 0 }) {
+export function enqueue({ provider, event, url, body, contentType = 'application/json', headers = {}, signer = null, ref = null, delayMs = 0, duplicate = true }) {
+  // Failure injection from Settings: hold deliveries, or send each one twice.
+  delayMs += getSetting('webhooks.delaySeconds') * 1000;
+  if (duplicate && url && getSetting('webhooks.duplicate') === 'twice') {
+    enqueue({ provider, event, url, body, contentType, headers, signer, ref, delayMs: delayMs + 1000, duplicate: false });
+  }
   const id = `whd_${rand(16)}`;
   const now = Date.now();
   const payload = typeof body === 'string' ? body : JSON.stringify(body);

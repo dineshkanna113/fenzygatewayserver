@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { getSetting } from '../settings.js';
+import { getSetting, setSettings } from '../settings.js';
 import { baseUrl, escapeHtml, inlineJson, log } from '../util.js';
 import { implicitOrder } from './razorpay.js';
 import { adapters } from './registry.js';
@@ -17,6 +17,7 @@ const PROVIDER_THEME = {
   cashfree: '#6c3ce0',
   phonepe: '#5f259f',
   phonepe2: '#5f259f',
+  paytm: '#00b9f5',
   generic: '#0f766e',
 };
 
@@ -38,9 +39,9 @@ function renderPage(res, ctx) {
 
 function renderError(res, status, title, message) {
   res.status(status).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title><link rel="stylesheet" href="/assets/checkout.css"></head>
-<body><div class="app"><div class="sheet"><div class="state-screen"><div class="state-icon fail">!</div><h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(message)}</p></div>
-<div class="sheet-foot"><span class="test-pill">Test mode</span> Mock gateway. No real money moves.</div></div></div></body></html>`);
+<title>${escapeHtml(title)}</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Crect x='0' width='2' height='12' fill='%23e8c531'/%3E%3Crect x='2' width='2' height='12' fill='%2335b7c4'/%3E%3Crect x='4' width='2' height='12' fill='%233fa66a'/%3E%3Crect x='6' width='2' height='12' fill='%23c2468f'/%3E%3Crect x='8' width='2' height='12' fill='%23d2453b'/%3E%3Crect x='10' width='2' height='12' fill='%232b4bd9'/%3E%3C/svg%3E"><link rel="stylesheet" href="/assets/base.css"><link rel="stylesheet" href="/assets/checkout.css"></head>
+<body><div class="app"><div class="ticket narrow"><div class="stage solo"><div class="pane"><span class="testbar"></span><div class="pane-body"><div class="state-screen"><div class="state-icon fail">!</div><h2>${escapeHtml(title)}</h2><p class="muted">${escapeHtml(message)}</p></div></div>
+<div class="sheet-foot"><span class="test-pill">Test mode</span> Mock gateway. No real money moves.</div></div></div></div></div></body></html>`);
 }
 
 /* ----------------------------- SDK scripts ----------------------------- */
@@ -272,6 +273,12 @@ router.post('/checkout/:provider/:id/complete', express.json({ limit: '32kb' }),
       : { status: 'failed', method: 'card', instrument: {}, error: { kind: 'authentication_failed', message: ERRORS.authentication_failed } };
   } else {
     result = decide(b);
+  }
+  const injected = getSetting('checkout.nextFailure');
+  if (injected && result.status === 'success') {
+    result = { status: 'failed', method: result.method, instrument: result.instrument, error: { kind: injected, message: ERRORS[injected] || injected } };
+    setSettings({ 'checkout.nextFailure': null });
+    log.info('checkout failure injected', { provider: adapter.name, id: req.params.id, kind: injected });
   }
   if (result.status === 'otp_required') return res.json({ status: 'otp_required', instrument: result.instrument });
   const out = adapter.complete(req.params.id, result, { query: cleanQuery(b.query) });

@@ -8,6 +8,7 @@ import { adminAuth, chaos, errorHandler, notFound, rateLimit, requestLog, securi
 import * as cashfree from './payments/cashfree.js';
 import * as checkout from './payments/checkout.js';
 import * as genericPay from './payments/generic.js';
+import * as paytm from './payments/paytm.js';
 import * as phonepe from './payments/phonepe.js';
 import * as razorpay from './payments/razorpay.js';
 import * as stripe from './payments/stripe.js';
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/stripe', chaos, stripe.router);
   app.use('/cashfree', chaos, cashfree.router);
   app.use('/phonepe', chaos, phonepe.router);
+  app.use('/paytm', chaos, paytm.router);
   app.use('/generic', chaos, genericPay.router, genericMsg.router);
 
   // SMS

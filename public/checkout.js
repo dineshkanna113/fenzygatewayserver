@@ -50,20 +50,40 @@
     if (brandOf(d) === 'amex') return [d.slice(0, 4), d.slice(4, 10), d.slice(10, 15)].filter(Boolean).join(' ');
     return d.replace(/(\d{4})(?=\d)/g, '$1 ');
   }
-  function hexLum(hex) {
-    var m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return 0;
-    var n = parseInt(m[1], 16);
-    return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  function relLum(hex) {
+    var n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(function (c) {
+      c /= 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }).reduce(function (sum, c, i) { return sum + c * [0.2126, 0.7152, 0.0722][i]; }, 0);
+  }
+  // Text colour with the higher WCAG contrast on the given brand colour.
+  function pickInk(hex) {
+    var L = relLum(hex);
+    return 1.05 / (L + 0.05) >= (L + 0.05) / (relLum('#101827') + 0.05) ? '#ffffff' : '#101827';
   }
 
   var root = document.documentElement;
-  root.style.setProperty('--brand', C.theme);
-  if (hexLum(C.theme) > 0.65) root.style.setProperty('--brand-ink', '#0f172a');
+  if (/^#[0-9a-f]{6}$/i.test(C.theme || '')) {
+    root.style.setProperty('--brand', C.theme);
+    root.style.setProperty('--brand-ink', pickInk(C.theme));
+  }
   if (C.embedded) document.body.classList.add('embedded');
   document.title = C.merchant + ' · Secure Checkout';
 
   var AMOUNT = money(C.amount, C.currency);
+
+  // Currency sign and decimals are set smaller than the whole-number part, like a printed slip.
+  function amountHtml() {
+    var v = ZERO_DECIMAL.indexOf(C.currency) >= 0 ? C.amount : C.amount / 100;
+    try {
+      return new Intl.NumberFormat(C.currency === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: C.currency }).formatToParts(v).map(function (p) {
+        if (p.type === 'currency') return '<span class="cur">' + esc(p.value) + '</span>';
+        if (p.type === 'decimal' || p.type === 'fraction') return '<span class="frac">' + esc(p.value) + '</span>';
+        return esc(p.value);
+      }).join('');
+    } catch (e) { return esc(AMOUNT); }
+  }
 
   var I = {
     close: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -132,22 +152,21 @@
 
   /* ------------------------------ layout ------------------------------ */
 
-  function head() {
+  function slip() {
     var logo = C.image ? '<img src="' + esc(C.image) + '" alt="">' : esc((C.merchant || 'M').trim().charAt(0).toUpperCase());
-    var payer = [C.prefill.contact, C.prefill.email].filter(Boolean).map(esc).join('<br>');
-    var closable = C.embedded || C.cancelable;
-    var lockScreens = ['processing', 'success'];
-    return '<div class="sheet-head"><div class="test-banner">Test mode</div>' +
-      '<div class="head-row"><div class="logo">' + logo + '</div>' +
-      '<div class="merchant"><div class="merchant-name">' + esc(C.merchant) + '</div>' +
-      '<div class="merchant-desc">' + esc(C.description || C.label + ' secure checkout') + '</div></div>' +
-      (closable && lockScreens.indexOf(S.screen) < 0 && S.screen !== 'status' ? '<button class="icon-btn" data-action="close" aria-label="Cancel payment">' + I.close + '</button>' : '') +
-      '</div><div class="amount-row"><div><div class="amount-label">Amount payable</div><div class="amount">' + AMOUNT + '</div></div>' +
-      (payer ? '<div class="payer">' + payer + '</div>' : '') + '</div></div>';
+    var lines = [['Reference', C.reference, true], ['Paying with', C.label, false], ['Contact', C.prefill.contact, false], ['Email', C.prefill.email, false]]
+      .filter(function (l) { return l[1]; })
+      .map(function (l) { return '<div><dt>' + l[0] + '</dt><dd' + (l[2] ? ' class="code"' : '') + '>' + esc(l[1]) + '</dd></div>'; }).join('');
+    return '<aside class="slip"><span class="testbar"></span><div class="slip-inner">' +
+      '<div class="merchant-row"><div class="logo" aria-hidden="true">' + logo + '</div><div class="merchant"><div class="merchant-name">' + esc(C.merchant) + '</div>' +
+      '<div class="merchant-desc">' + esc(C.description || 'Secure checkout') + '</div></div></div>' +
+      '<div class="amount-block"><span class="amount-label">Amount due</span><div class="amount" aria-label="' + esc(AMOUNT) + '">' + amountHtml() + '</div></div>' +
+      (lines ? '<dl class="slip-lines">' + lines + '</dl>' : '') +
+      '<div class="test-note">Test mode. No real money moves.</div></div></aside>';
   }
 
   function foot() {
-    return '<div class="sheet-foot"><span class="test-pill">Test mode</span><span class="lock">' + I.lock + ' Secured by ' + esc(C.label) + ' (mock). No real money moves.</span></div>';
+    return '<div class="sheet-foot"><span class="test-pill">Test mode</span><span class="lock">' + I.lock + ' ' + esc(C.label) + ' test checkout</span></div>';
   }
 
   function backLink() {
@@ -162,7 +181,7 @@
 
   var screens = {
     methods: function () {
-      return '<p class="section-title">Payment options</p><div class="methods">' + methods.map(function (m) {
+      return '<h2 class="pane-title">How would you like to pay?</h2><div class="methods">' + methods.map(function (m) {
         var d = METHODS[m];
         return '<button class="method" data-action="method" data-m="' + m + '"><span class="method-icon">' + d.icon + '</span>' +
           '<span class="method-text"><span class="method-title">' + d.title + '</span><br><span class="method-sub">' + d.sub + '</span></span>' +
@@ -172,7 +191,7 @@
 
     card: function () {
       var c = S.card, e = S.errors, brand = brandOf(c.number);
-      return backLink() + '<form data-form="card" novalidate>' +
+      return backLink() + '<h2 class="pane-title">Pay by card</h2><form data-form="card" novalidate>' +
         field('cc-number', 'Card number', '<div class="input-wrap"><input class="input has-badge' + (e.number ? ' invalid' : '') + '" id="cc-number" name="number" inputmode="numeric" autocomplete="cc-number" placeholder="1234 1234 1234 1234" maxlength="23" value="' + esc(formatCard(c.number)) + '">' +
           '<span class="badge-in" id="cc-brand"' + (brand ? '' : ' hidden') + '>' + esc(brand) + '</span></div>', e.number) +
         '<div class="row">' +
@@ -191,11 +210,11 @@
     upi: function () {
       var apps = [['gpay', 'Google Pay', '#1a73e8'], ['phonepe', 'PhonePe', '#5f259f'], ['paytm', 'Paytm', '#00baf2'], ['bhim', 'BHIM', '#f37021']];
       return backLink() +
-        '<p class="section-title">Pay using UPI app</p><div class="upi-apps">' + apps.map(function (a) {
+        '<h2 class="pane-title">Pay with UPI</h2><p class="section-title">Open an app</p><div class="upi-apps">' + apps.map(function (a) {
           return '<button class="tile" data-action="upi-app" data-app="' + a[0] + '" data-name="' + a[1] + '"><span class="mono" style="background:' + a[2] + '">' + a[1].charAt(0) + '</span>' + a[1] + '</button>';
         }).join('') + '</div>' +
         '<button class="btn secondary" data-action="upi-qr">Show QR code</button>' +
-        '<div class="divider">or enter UPI ID</div>' +
+        '<div class="divider">or enter a UPI ID</div>' +
         '<form data-form="upi" novalidate>' +
         field('vpa', 'UPI ID', '<input class="input' + (S.errors.vpa ? ' invalid' : '') + '" id="vpa" name="vpa" placeholder="yourname@bank" autocomplete="off" autocapitalize="none" value="' + esc(S.vpa) + '">', S.errors.vpa) +
         '<button class="btn" type="submit">Verify and pay ' + AMOUNT + '</button></form>' +
@@ -204,14 +223,14 @@
 
     upi_qr: function () {
       return '<button class="back-link" data-action="method" data-m="upi">' + I.back + ' Back</button>' +
-        '<div class="state-screen" style="padding-top:0">' + qrSvg() + '<p><strong>Scan with any UPI app</strong></p><p class="muted small">QR valid for 5 minutes</p></div>' +
+        '<div class="state-screen upi-qr-wrap" style="padding-top:0">' + qrSvg() + '<p><strong>Scan with any UPI app</strong></p><p class="muted small">QR valid for 5 minutes</p></div>' +
         '<div class="btn-row"><button class="btn ok" data-action="qr-pay">Simulate scan &amp; pay</button><button class="btn secondary" data-action="qr-fail">Simulate failure</button></div>';
     },
 
     upi_wait: function () {
       var auto = C.upiAutoApproveSeconds > 0 && !/^fail/.test(S.upi.vpa);
       return '<div class="state-screen"><div class="state-icon wait">' + I.clock + '</div>' +
-        '<h2>Approve payment</h2><p class="muted">' + (S.upi.flow === 'intent' ? 'Complete the payment in ' + esc(S.upi.app) : 'A collect request was sent to <strong>' + esc(S.upi.vpa) + '</strong>') + '</p>' +
+        '<h2>Approve the payment in your UPI app</h2><p class="muted">' + (S.upi.flow === 'intent' ? 'Complete the payment in ' + esc(S.upi.app) : 'A collect request was sent to <strong>' + esc(S.upi.vpa) + '</strong>') + '</p>' +
         '<p class="muted small">Open your UPI app and approve the request from ' + esc(C.merchant) + '.</p>' +
         '<div class="progress"><div id="upi-bar"></div></div><p class="muted small">Expires in <span id="upi-left">5:00</span>.' + (auto ? ' Auto-approves in <span id="upi-auto">' + C.upiAutoApproveSeconds + '</span>s' : '') + '</p></div>' +
         '<div class="btn-row"><button class="btn ok" data-action="upi-approve">Simulate approve</button><button class="btn danger" data-action="upi-decline">Simulate decline</button></div>';
@@ -219,7 +238,7 @@
 
     netbanking: function () {
       var popular = ['HDFC', 'ICIC', 'SBIN', 'UTIB', 'KKBK', 'YESB'];
-      return backLink() + '<p class="section-title">Popular banks</p><div class="grid">' + popular.map(function (code) {
+      return backLink() + '<h2 class="pane-title">Choose your bank</h2><p class="section-title">Popular banks</p><div class="grid">' + popular.map(function (code) {
         var b = C.banks.filter(function (x) { return x.code === code; })[0];
         return '<button class="tile" data-action="bank" data-code="' + code + '"><span class="mono" style="background:' + BANK_COLORS[code] + '">' + esc(b.name.charAt(0)) + '</span>' + esc(b.name.replace(/ Bank$| of India$/, '')) + '</button>';
       }).join('') + '</div>' +
@@ -229,7 +248,7 @@
     },
 
     bank_redirect: function () {
-      return '<div class="state-screen"><div class="spinner"></div><h2>Redirecting to ' + esc(S.bank.name) + '</h2><p class="muted">Please do not refresh the page or press back.</p></div>';
+      return '<div class="state-screen"><div class="spinner"></div><h2>Taking you to ' + esc(S.bank.name) + '</h2><p class="muted">Do not refresh or press back.</p></div>';
     },
 
     bank: function () {
@@ -244,7 +263,7 @@
     },
 
     wallet: function () {
-      return backLink() + '<p class="section-title">Wallets</p><div class="methods">' + C.wallets.map(function (w) {
+      return backLink() + '<h2 class="pane-title">Choose a wallet</h2><div class="methods">' + C.wallets.map(function (w) {
         return '<button class="method" data-action="wallet" data-code="' + w.code + '"><span class="method-icon" style="background:' + WALLET_COLORS[w.code] + ';color:#fff;font-weight:800">' + esc(w.name.charAt(0)) + '</span>' +
           '<span class="method-text"><span class="method-title">' + esc(w.name) + '</span></span><span class="chev">' + I.chev + '</span></button>';
       }).join('') + '</div>';
@@ -265,7 +284,7 @@
     authenticate: function () { return otpScreen('authenticate'); },
 
     processing: function () {
-      return '<div class="state-screen"><div class="spinner"></div><h2>Processing payment</h2><p class="muted">This may take a few seconds. Please do not close this window.</p></div>';
+      return '<div class="state-screen"><div class="spinner"></div><h2>Processing payment</h2><p class="muted">This takes a few seconds. Keep this window open.</p></div>';
     },
 
     success: function () {
@@ -283,10 +302,10 @@
       var autoRedirect = !r.retryable && r.next && r.next.type === 'redirect';
       var buttons = '';
       if (r.retryable) {
-        buttons = '<div class="btn-row" style="margin-top:16px"><button class="btn" data-action="retry">Retry payment</button></div>' +
+        buttons = '<div class="btn-row" style="margin-top:16px"><button class="btn" data-action="retry">Try again</button></div>' +
           '<p style="margin-top:12px"><button class="link-btn" data-action="' + (r.next && r.next.type === 'redirect' ? 'return' : 'close') + '">' + (C.embedded && !(r.next && r.next.type === 'redirect') ? 'Cancel payment' : 'Return to ' + esc(C.merchant)) + '</button></p>';
       }
-      return '<div class="state-screen"><div class="state-icon fail">' + I.cross + '</div><h2>Payment failed</h2><p class="muted">' + esc(err) + '</p>' +
+      return '<div class="state-screen"><div class="state-icon fail">' + I.cross + '</div><h2>Payment did not go through</h2><p class="muted">' + esc(err) + '</p>' +
         kv([['Payment ID', r.payment_id], ['Reason', r.error && r.error.code]]) +
         (autoRedirect ? '<p class="muted small" style="margin-top:14px">Returning you to ' + esc(C.merchant) + '&hellip;</p>' : '') + buttons + '</div>';
     },
@@ -493,7 +512,10 @@
 
   function render() {
     var body = screens[S.screen]();
-    app.innerHTML = '<div class="sheet" role="dialog" aria-label="Checkout">' + head() + '<div class="sheet-body">' + body + '</div>' + foot() + '</div>';
+    var closable = (C.embedded || C.cancelable) && ['processing', 'success', 'status'].indexOf(S.screen) < 0;
+    app.innerHTML = '<div class="ticket"><div class="stage" role="dialog" aria-label="Checkout for ' + esc(C.merchant) + '">' + slip() +
+      '<div class="pane' + (['otp', 'authenticate', 'bank', 'wallet_page'].indexOf(S.screen) >= 0 ? ' has-frame' : '') + '">' + (closable ? '<button class="icon-btn pane-close" data-action="close" aria-label="Cancel payment">' + I.close + '</button>' : '') +
+      '<div class="pane-body">' + body + '</div>' + foot() + '</div></div></div>';
     var focus = app.querySelector('#cc-number, #vpa, .otp-box');
     if (focus && !('ontouchstart' in window)) focus.focus();
     if (S.screen === 'upi_wait') startUpiTimers();
