@@ -19,7 +19,7 @@
   "dependencies": {
     "express": "^5.1.0",
     "mailparser": "^3.7.4",
-    "smtp-server": "^3.14.0"
+    "smtp-server": "^3.21.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
